@@ -1,13 +1,14 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
     Search, Bell, Settings, Home, Inbox,
     Megaphone, Percent, TrendingUp,
     Package, Users, Store, Plus, ChevronRight,
-    Globe, BookOpen,
+    Globe, BookOpen, MessageSquare, X, Eye
 } from 'lucide-react';
 import secondaryLogo from '../assets/Secondary_logo.svg';
 import MetallicPaint from '@/components/MetallicPaint';
+import AIChat, { type Message } from './AIChat';
 
 const metallicProps = {
     seed: 42, scale: 2, patternSharpness: 0.2, noiseScale: 2.5,
@@ -17,22 +18,18 @@ const metallicProps = {
     lightColor: "#ffebab", darkColor: "#080808", tintColor: "#ffffff",
 };
 
+// ✅ "Online Store" is now officially part of your main navItems!
 const navItems = [
+    { icon: <Home className="h-[18px] w-[18px]" strokeWidth={1.5} />, label: 'Home', path: '/' },
     {
-        icon: <Home className="h-[18px] w-[18px]" strokeWidth={1.5} />,
-        label: 'Home', path: '/',
-    },
-    {
-        icon: <Inbox className="h-[18px] w-[18px]" strokeWidth={1.5} />,
-        label: 'Orders', path: '/orders',
+        icon: <Inbox className="h-[18px] w-[18px]" strokeWidth={1.5} />, label: 'Orders', path: '/orders',
         subItems: [
             { label: 'Drafts', path: '/orders/drafts' },
             { label: 'Abandoned checkouts', path: '/orders/abandoned' },
         ],
     },
     {
-        icon: <Package className="h-[18px] w-[18px]" strokeWidth={1.5} />,
-        label: 'Products', path: '/products',
+        icon: <Package className="h-[18px] w-[18px]" strokeWidth={1.5} />, label: 'Products', path: '/products',
         subItems: [
             { label: 'Collections', path: '/products/collections' },
             { label: 'Inventory', path: '/products/inventory' },
@@ -42,47 +39,117 @@ const navItems = [
         ],
     },
     {
-        icon: <Users className="h-[18px] w-[18px]" strokeWidth={1.5} />,
-        label: 'Customers', path: '/customers',
+        icon: <Users className="h-[18px] w-[18px]" strokeWidth={1.5} />, label: 'Customers', path: '/customers',
         subItems: [
             { label: 'Segments', path: '/customers/segments' },
             { label: 'Companies', path: '/customers/companies' },
         ],
     },
     {
-        icon: <Megaphone className="h-[18px] w-[18px]" strokeWidth={1.5} />,
-        label: 'Marketing', path: '/marketing',
+        icon: <Megaphone className="h-[18px] w-[18px]" strokeWidth={1.5} />, label: 'Marketing', path: '/marketing',
         subItems: [
             { label: 'Campaigns', path: '/marketing/campaigns' },
             { label: 'Automations', path: '/marketing/automations' },
             { label: 'Attribution', path: '/marketing/attribution' },
         ],
     },
+    { icon: <Percent className="h-[18px] w-[18px]" strokeWidth={1.5} />, label: 'Discounts', path: '/discounts' },
     {
-        icon: <Percent className="h-[18px] w-[18px]" strokeWidth={1.5} />,
-        label: 'Discounts', path: '/discounts',
-    },
-    {
-        icon: <TrendingUp className="h-[18px] w-[18px]" strokeWidth={1.5} />,
-        label: 'Analytics', path: '/analytics',
+        icon: <TrendingUp className="h-[18px] w-[18px]" strokeWidth={1.5} />, label: 'Analytics', path: '/analytics',
         subItems: [
             { label: 'Reports', path: '/analytics/reports' },
             { label: 'Live View', path: '/analytics/live-view' },
         ],
     },
-    {
-        icon: <Globe className="h-[18px] w-[18px]" strokeWidth={1.5} />,
-        label: 'Markets', path: '/markets',
-    },
-    {
-        icon: <BookOpen className="h-[18px] w-[18px]" strokeWidth={1.5} />,
-        label: 'Catalogs', path: '/catalogs',
-    },
+    { icon: <Globe className="h-[18px] w-[18px]" strokeWidth={1.5} />, label: 'Markets', path: '/markets' },
+    { icon: <BookOpen className="h-[18px] w-[18px]" strokeWidth={1.5} />, label: 'Catalogs', path: '/catalogs' },
+    { icon: <Store className="h-[18px] w-[18px]" strokeWidth={1.5} />, label: 'Online Store', path: '/online-store' }, // Placed at the bottom of main list
 ];
 
 export default function Layout() {
     const navigate = useNavigate();
     const location = useLocation();
+
+    // ── Global Chat Memory ──
+    const [messages, setMessages] = useState<Message[]>(() => {
+        const savedMemory = localStorage.getItem('dvsk_ai_messages');
+        return savedMemory ? JSON.parse(savedMemory) : [];
+    });
+
+    // ── Hidden Background Vault for Old Chats ──
+    const [pastMemory, setPastMemory] = useState(() => {
+        return localStorage.getItem('dvsk_ai_background_memory') || '';
+    });
+
+    const [input, setInput] = useState('');
+    const [loading, setLoading] = useState(false);
+    const [isChatOpen, setIsChatOpen] = useState(false);
+
+    // Save UI messages and Background Memory whenever they change
+    useEffect(() => {
+        localStorage.setItem('dvsk_ai_messages', JSON.stringify(messages));
+        localStorage.setItem('dvsk_ai_background_memory', pastMemory);
+    }, [messages, pastMemory]);
+
+    // ── Auto-Archiver Logic ──
+    const archiveChatToMemory = (currentMessages: Message[]) => {
+        if (currentMessages.length === 0) return;
+
+        const chatLog = currentMessages.map(m => `${m.role === 'user' ? 'Kashyap' : 'AI'}: ${m.content}`).join(' | ');
+        const updatedMemory = (pastMemory + '\n---\n' + chatLog).slice(-3000);
+
+        setPastMemory(updatedMemory);
+        setMessages([]);
+    };
+
+    useEffect(() => {
+        if (messages.length >= 20) {
+            archiveChatToMemory(messages);
+        }
+    }, [messages]);
+
+    const sendMessage = async () => {
+        const text = input.trim();
+        if (!text || loading) return;
+
+        const newMessages = [...messages, { role: 'user' as const, content: text }];
+        setMessages(newMessages);
+        setInput('');
+        setLoading(true);
+
+        try {
+            const res = await fetch('http://localhost:5001/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    messages: newMessages,
+                    pastMemory: pastMemory
+                }),
+            });
+
+            if (!res.ok) throw new Error('Failed');
+            const data = await res.json();
+
+            const replyText = data.reply || 'No response';
+            const delay = Math.min(replyText.length * 10, 2500);
+
+            setTimeout(() => {
+                setMessages([...newMessages, { role: 'assistant', content: replyText }]);
+                setLoading(false);
+            }, delay);
+
+        } catch {
+            setMessages([...newMessages, { role: 'assistant', content: 'Could not connect to backend.' }]);
+            setLoading(false);
+        }
+    };
+
+    const chatState = {
+        messages, input, setInput, loading, sendMessage, setMessages,
+        startNewChat: () => archiveChatToMemory(messages)
+    };
+
+    const isHomePage = location.pathname === '/';
 
     return (
         <div
@@ -145,20 +212,37 @@ export default function Layout() {
                                 const activeSubIndex = item.subItems?.findIndex((sub) => location.pathname === sub.path) ?? -1;
 
                                 return (
-                                    <li key={item.label} className="relative">
-                                        <a
-                                            href="#"
-                                            onClick={(e) => { e.preventDefault(); navigate(item.path); }}
-                                            className={`flex items-center gap-2.5 px-2.5 py-[6px] rounded-lg text-[13px] font-medium transition-all relative z-10
-                        ${isMainActive
-                                                    ? 'bg-white text-[#1a1a1a] shadow-sm'
-                                                    : isExpanded
-                                                        ? 'text-white'
-                                                        : 'text-[#c4c4c4] hover:bg-[#2c2c2c] hover:text-white'
-                                                }`}
-                                        >
-                                            {item.icon} {item.label}
-                                        </a>
+                                    <li key={item.label} className="relative group">
+                                        <div className="flex items-center relative">
+                                            <a
+                                                href="#"
+                                                onClick={(e) => { e.preventDefault(); navigate(item.path); }}
+                                                className={`flex-1 flex items-center gap-2.5 px-2.5 py-[6px] rounded-lg text-[13px] font-medium transition-all relative z-10
+                                                    ${isMainActive
+                                                        ? 'bg-white text-[#1a1a1a] shadow-sm'
+                                                        : isExpanded
+                                                            ? 'text-white'
+                                                            : 'text-[#c4c4c4] hover:bg-[#2c2c2c] hover:text-white'
+                                                    }`}
+                                            >
+                                                {item.icon} {item.label}
+                                            </a>
+
+                                            {/* ✅ The Shopify Hover Eye only appears next to "Online Store" */}
+                                            {item.label === 'Online Store' && (
+                                                <a
+                                                    href="http://localhost:5173" // Change to your live site URL later!
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    title="View online store"
+                                                    className={`absolute right-2 opacity-0 group-hover:opacity-100 hover:bg-[#4d4d4d] p-1 rounded transition-all z-20
+                                                        ${isMainActive ? 'text-[#6b6b6b] hover:text-white' : 'text-[#9a9a9a] hover:text-white'}`}
+                                                    onClick={(e) => e.stopPropagation()}
+                                                >
+                                                    <Eye className="h-[14px] w-[14px]" strokeWidth={2} />
+                                                </a>
+                                            )}
+                                        </div>
 
                                         {item.subItems && isExpanded && (
                                             <div className="relative pb-1">
@@ -184,12 +268,12 @@ export default function Layout() {
                                                     {item.subItems.map((sub) => {
                                                         const isSubActive = location.pathname === sub.path;
                                                         return (
-                                                            <li key={sub.label} className="relative group">
+                                                            <li key={sub.label} className="relative group/sub">
                                                                 <a
                                                                     href="#"
                                                                     onClick={(e) => { e.preventDefault(); navigate(sub.path); }}
                                                                     className={`block pl-[38px] pr-2.5 py-[6px] rounded-lg text-[13px] font-medium transition-all
-                                    ${isSubActive
+                                                                        ${isSubActive
                                                                             ? 'bg-white text-[#1a1a1a] shadow-sm'
                                                                             : 'text-[#9a9a9a] hover:text-white hover:bg-[#2c2c2c]'
                                                                         }`}
@@ -207,18 +291,7 @@ export default function Layout() {
                             })}
                         </ul>
 
-                        {/* Sales Channels */}
-                        <div className="mt-6 px-2.5">
-                            <button className="flex items-center justify-between w-full text-[11px] font-semibold text-[#6b6b6b] mb-1.5 hover:text-[#c4c4c4] transition-colors uppercase tracking-wider">
-                                Sales channels <ChevronRight className="h-3.5 w-3.5" />
-                            </button>
-                            <a href="#" className="flex items-center gap-2.5 px-2.5 py-[6px] text-[#c4c4c4] hover:bg-[#2c2c2c] hover:text-white rounded-lg font-medium text-[13px] transition-all">
-                                <Store className="h-[18px] w-[18px]" strokeWidth={1.5} /> Online Store
-                            </a>
-                        </div>
-
-                        {/* Apps */}
-                        <div className="mt-4 px-2.5">
+                        <div className="mt-4 px-2.5 pt-4 border-t border-[#333]">
                             <button className="flex items-center justify-between w-full text-[11px] font-semibold text-[#6b6b6b] mb-1.5 hover:text-[#c4c4c4] transition-colors uppercase tracking-wider">
                                 Apps <ChevronRight className="h-3.5 w-3.5" />
                             </button>
@@ -231,7 +304,6 @@ export default function Layout() {
                         </div>
                     </div>
 
-                    {/* Settings */}
                     <div className="p-2 pb-3">
                         <a href="#" className="flex items-center gap-2.5 px-2.5 py-[6px] text-[#c4c4c4] hover:bg-[#2c2c2c] hover:text-white rounded-lg font-medium text-[13px] transition-all mb-3">
                             <Settings className="h-[18px] w-[18px]" strokeWidth={1.5} /> Settings
@@ -241,18 +313,60 @@ export default function Layout() {
 
                 {/* Main Content */}
                 <main className="flex-1 ml-[220px] bg-[#f1f2f4] overflow-y-auto" style={{ borderRadius: '12px 0 0 0' }}>
-                    <Outlet />
+                    <Outlet context={chatState} />
+
+                    {/* ── Floating Chat ── */}
+                    {!isHomePage && (
+                        <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end">
+                            {isChatOpen && (
+                                <div
+                                    className="mb-4 w-[380px]"
+                                    style={{
+                                        animation: 'chatPopIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                                        transformOrigin: 'bottom right',
+                                    }}
+                                >
+                                    <AIChat
+                                        {...chatState}
+                                        isFloating={true}
+                                        onClose={() => setIsChatOpen(false)}
+                                    />
+                                </div>
+                            )}
+
+                            <button
+                                onClick={() => setIsChatOpen(!isChatOpen)}
+                                className="w-14 h-14 bg-[#1a1a1a] text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-110 transition-transform relative"
+                                style={{ animation: 'chatPopIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)' }}
+                            >
+                                {isChatOpen
+                                    ? <X className="w-5 h-5" />
+                                    : <MessageSquare className="w-5 h-5" />
+                                }
+                                {messages.length > 0 && !isChatOpen && (
+                                    <span className="absolute top-1 right-1 w-3 h-3 bg-[#a855f7] rounded-full border-2 border-[#f1f2f4]" />
+                                )}
+                            </button>
+                        </div>
+                    )}
                 </main>
             </div>
 
-            <style dangerouslySetInnerHTML={{
-                __html: `
-          .sidebar-scroll::-webkit-scrollbar { width: 6px; }
-          .sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
-          .sidebar-scroll::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
-          .sidebar-scroll::-webkit-scrollbar-thumb:hover { background: #444; }
-        `
-            }} />
+            <style
+                dangerouslySetInnerHTML={{
+                    __html: `
+                        .sidebar-scroll::-webkit-scrollbar { width: 6px; }
+                        .sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
+                        .sidebar-scroll::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
+                        .sidebar-scroll::-webkit-scrollbar-thumb:hover { background: #444; }
+
+                        @keyframes chatPopIn {
+                            0% { opacity: 0; transform: scale(0.85) translateY(10px); }
+                            100% { opacity: 1; transform: scale(1) translateY(0); }
+                        }
+                    `,
+                }}
+            />
         </div>
     );
 }

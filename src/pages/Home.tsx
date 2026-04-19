@@ -1,40 +1,22 @@
 import React from 'react';
-import {
-  Plus, Pencil, ArrowUpCircle, Sparkles,
-  Lock, Copy, Tag
-} from 'lucide-react';
+import { Pencil, Lock, Copy, Tag, Sparkles } from 'lucide-react';
+import { useOutletContext } from 'react-router-dom';
+import AIChat, { type ChatProps } from '../components/AIChat';
 
 export default function Home() {
-  return (
-    <div className="max-w-[860px] mx-auto px-8 py-6">
+  // Grab the global chat memory from Layout.tsx
+  const chatState = useOutletContext<ChatProps>();
 
-      <h1 className="text-[22px] font-bold text-[#1a1a1a] mb-5 tracking-tight">
+  return (
+    <div className="max-w-[860px] mx-auto px-8 py-10">
+
+      <h1 className="text-[24px] font-bold text-[#1a1a1a] mb-8 tracking-tight">
         Good morning, let's get started.
       </h1>
 
-      {/* Ask anything */}
-      <div className="bg-white rounded-xl shadow-sm border border-[#e8e8e8] mb-6 overflow-hidden">
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-[#f0f0f0]">
-          <input
-            type="text"
-            placeholder="Ask anything..."
-            className="flex-1 focus:outline-none text-[14px] text-[#1a1a1a] placeholder-[#9a9a9a]"
-          />
-          <div className="flex items-center gap-1">
-            <button className="p-1.5 hover:bg-[#f5f5f5] rounded-lg transition-colors">
-              <Plus className="h-4 w-4 text-[#6b6b6b]" />
-            </button>
-            <button className="p-1.5 hover:bg-[#f5f5f5] rounded-lg transition-colors">
-              <ArrowUpCircle className="h-5 w-5 text-[#c4c4c4]" />
-            </button>
-          </div>
-        </div>
-        <div className="px-4 py-2.5 flex items-center gap-2">
-          <div className="w-5 h-5 bg-[#f0e8ff] rounded-full flex items-center justify-center">
-            <Sparkles className="h-3 w-3 text-[#7c3aed]" />
-          </div>
-          <span className="text-[12px] text-[#8a8a8a]">Powered by Magic</span>
-        </div>
+      {/* ✅ Chat now uses the global memory and is completely inline (not floating) */}
+      <div className="mb-8">
+        <AIChat {...chatState} isFloating={false} />
       </div>
 
       {/* Setup Card */}

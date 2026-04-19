@@ -23,6 +23,8 @@ import Catalogs from './pages/Catalogs';
 import Analytics from './pages/Analytics';
 import Reports from './pages/Reports';
 import LiveView from './pages/LiveView';
+import OnlineStore from './pages/OnlineStore'; // ✅ ADDED THE NEW PAGE IMPORT
+
 
 export default function App() {
   return (
@@ -52,6 +54,10 @@ export default function App() {
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/analytics/reports" element={<Reports />} />
           <Route path="/analytics/live-view" element={<LiveView />} />
+
+          {/* ✅ ADDED THE NEW PAGE ROUTE HERE! */}
+          <Route path="/online-store" element={<OnlineStore />} />
+
         </Route>
       </Routes>
     </BrowserRouter>
