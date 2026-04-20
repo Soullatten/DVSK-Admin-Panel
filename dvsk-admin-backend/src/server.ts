@@ -5,10 +5,6 @@ import { exec } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import productRoutes from './routes/products.js';
-import orderRoutes from './routes/orders.js';
-import chatRoutes from './routes/chat.js';
-
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
@@ -16,15 +12,24 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 
-// ✅ Single, clean CORS setup
-app.use(cors({
+// ✅ CORS — must be the VERY FIRST middleware, before anything else
+// This ensures OPTIONS preflight always gets a 200 even if later middleware crashes
+const corsOptions = {
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
-}));
-app.options('*', cors());
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  credentials: false,
+};
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 app.use(express.json());
+
+// ✅ Import routes AFTER cors is set up
+// This way even if a route import fails, CORS preflight still works
+const { default: productRoutes } = await import('./routes/products.js');
+const { default: orderRoutes } = await import('./routes/orders.js');
+const { default: chatRoutes } = await import('./routes/chat.js');
 
 // API Routes
 app.use('/api/products', productRoutes);
@@ -60,7 +65,6 @@ app.get('/', (_req, res) => {
 
 const PORT = process.env.PORT || 5001;
 
-// Only listen locally — Vercel handles this automatically in production
 if (process.env.NODE_ENV !== 'production') {
   app.listen(PORT, () => {
     console.log(`🚀 Admin Backend running on http://localhost:${PORT}`);
