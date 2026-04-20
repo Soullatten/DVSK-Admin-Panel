@@ -31,14 +31,22 @@ app.use((req, res, next) => {
 });
 
 // ✅ 2. Standard CORS package fallback
-app.use(cors({
-  origin: 'https://dvsk-admin-panel-pkni93sls-krishivrajputgmailcoms-projects.vercel.app',
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  next();
+});
+
+app.use(cors({ origin: '*', methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'], allowedHeaders: ['Content-Type', 'Authorization'] }));
+
+// ✅ ADD THIS ONE LINE RIGHT HERE — handles OPTIONS preflight on ALL routes
+app.options('*', cors());
 
 app.use(express.json());
-
 // API Routes
 app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
