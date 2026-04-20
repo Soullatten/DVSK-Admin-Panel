@@ -1,9 +1,8 @@
 import { Router, Response, Request } from 'express';
 import OpenAI from 'openai';
-import { PrismaClient } from '@prisma/client';
+import prisma from '../config/prisma.js';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 const openai = new OpenAI({
   apiKey: process.env.GROQ_API_KEY,
@@ -12,7 +11,7 @@ const openai = new OpenAI({
 
 router.post('/', async (req: Request, res: Response) => {
   try {
-    // ✅ 1. ADDED: Destructure pastMemory alongside messages!
+    // ✅ 1. Destructure pastMemory alongside messages
     const { messages, pastMemory } = req.body;
 
     // Fetch real data from YOUR exact schema
@@ -39,12 +38,12 @@ router.post('/', async (req: Request, res: Response) => {
     const outOfStockProducts = await prisma.product.count({
       where: {
         ProductVariant: {
-          every: { stock: 0 } // Looks at your ProductVariant model
+          every: { stock: 0 }
         }
       }
     });
 
-    // ✅ 2. ADDED: Inject Background Memory into the prompt
+    // ✅ 2. Inject Background Memory into the prompt
     const DVSK_DYNAMIC_PROMPT = `
 You are the Lead Data Analyst and Strategy Advisor for DVSK, a clothing brand. 
 You are speaking directly to Kashyap, the founder. 
