@@ -5,7 +5,7 @@ export default function OnlineStore() {
     const [device, setDevice] = useState<'desktop' | 'tablet' | 'mobile'>('desktop');
     const [isLive, setIsLive] = useState(false);
     const [isStarting, setIsStarting] = useState(false);
-    const STORE_URL = 'http://localhost:5173'; // ⚠️ Ensure this matches the port your public site runs on!
+    const STORE_URL = 'https://dvsk-alpha.vercel.app/'; // ⚠️ Ensure this matches the port your public site runs on!
 
     const deviceWidths = {
         desktop: 'w-full',
@@ -14,14 +14,13 @@ export default function OnlineStore() {
     };
 
     // ✅ THIS IS WHAT TRIGGERS YOUR BACKEND TERMINAL COMMAND
-    const handleGoLive = async () => {
+        const handleGoLive = async () => {
         setIsStarting(true);
-
         try {
-            // Tell the backend route we just made to run 'npm run dev'
-            await fetch('http://localhost:5001/api/start-store', { method: 'POST' });
+            // ✅ USE ENVIRONMENT VARIABLE INSTEAD OF LOCALHOST
+            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001';
+            await fetch(`${API_URL}/api/start-store`, { method: 'POST' });
 
-            // Wait 3.5 seconds for Vite/Next.js to compile before showing the iframe
             setTimeout(() => {
                 setIsLive(true);
                 setIsStarting(false);
@@ -30,7 +29,7 @@ export default function OnlineStore() {
         } catch (error) {
             console.error("Failed to start server", error);
             setIsStarting(false);
-            alert("Could not start the server. Is your backend running on port 5001?");
+            alert(`Could not connect to backend.`);
         }
     };
 
