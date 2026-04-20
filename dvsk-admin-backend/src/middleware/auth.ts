@@ -7,18 +7,23 @@ export interface AdminRequest extends Request {
 }
 
 export const protectAdmin = async (req: AdminRequest, res: Response, next: NextFunction): Promise<void> => {
+  // 1. ALLOW PREFLIGHT REQUESTS TO PASS
+  if (req.method === 'OPTIONS') {
+    next(); 
+    return;
+  }
+
   try {
     const token = req.headers.authorization?.split(' ')[1];
 
     if (!token) {
+      // Return a proper status so you can see it in DevTools (not Status 0)
       res.status(401).json({ message: 'Not authorized - No token' });
       return;
     }
 
-    // 1. Verify the Firebase token
     const decodedToken = await admin.auth().verifyIdToken(token);
 
-    // 2. Check if this user exists in your Postgres DB and is an ADMIN
     const user = await prisma.user.findUnique({
       where: { firebaseUid: decodedToken.uid }
     });
@@ -31,6 +36,7 @@ export const protectAdmin = async (req: AdminRequest, res: Response, next: NextF
     req.admin = user;
     next();
   } catch (error) {
+    console.error("Auth Error:", error);
     res.status(401).json({ message: 'Invalid token' });
   }
 };

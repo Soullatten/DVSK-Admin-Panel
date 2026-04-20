@@ -32,9 +32,9 @@ app.use((req, res, next) => {
 
 // ✅ 2. Standard CORS package fallback
 app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  origin: 'https://dvsk-admin-panel-pkni93sls-krishivrajputgmailcoms-projects.vercel.app',
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 app.use(express.json());
