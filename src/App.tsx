@@ -1,35 +1,43 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import Layout from './components/Layout';
-import Home from './pages/Home';
-import Orders from './pages/Order';
-import Drafts from './pages/Drafts';
-import AbandonedCheckouts from './pages/AbandonedCheckouts';
-import Products from './pages/Products';
-import Collections from './pages/Collections';
-import Inventory from './pages/Inventory';
-import PurchaseOrders from './pages/PurchaseOrders';
-import Transfers from './pages/Transfers';
-import GiftCards from './pages/GiftCards';
-import Customers from './pages/Customers';
-import Segments from './pages/Segments';
-import Companies from './pages/Companies';
-import Marketing from './pages/Marketing';
-import Campaigns from './pages/Campaigns';
-import Automations from './pages/Automations';
-import Attribution from './pages/Attribution';
-import Discounts from './pages/Discounts';
-import Markets from './pages/Markets';
-import Catalogs from './pages/Catalogs';
-import Analytics from './pages/Analytics';
-import Reports from './pages/Reports';
-import LiveView from './pages/LiveView';
-import OnlineStore from './pages/OnlineStore'; // ✅ ADDED THE NEW PAGE IMPORT
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import Layout from "./components/Layout";
 
+import Home from "./pages/Home";
+import Orders from "./pages/Order";
+import Drafts from "./pages/Drafts";
+import AbandonedCheckouts from "./pages/AbandonedCheckouts";
+import Products from "./pages/Products";
+import Collections from "./pages/Collections";
+import Inventory from "./pages/Inventory";
+import PurchaseOrders from "./pages/PurchaseOrders";
+import Transfers from "./pages/Transfers";
+import GiftCards from "./pages/GiftCards";
+import Customers from "./pages/Customers";
+import Segments from "./pages/Segments";
+import Companies from "./pages/Companies";
+import Marketing from "./pages/Marketing";
+import Campaigns from "./pages/Campaigns";
+import Automations from "./pages/Automations";
+import Attribution from "./pages/Attribution";
+import Discounts from "./pages/Discounts";
+import Markets from "./pages/Markets";
+import Catalogs from "./pages/Catalogs";
+import Analytics from "./pages/Analytics";
+import Reports from "./pages/Reports";
+import LiveView from "./pages/LiveView";
+import OnlineStore from "./pages/OnlineStore";
+import Login from "./pages/Login"; // 👈 NEW
+
+import { Toaster } from "react-hot-toast";
 
 export default function App() {
   return (
     <BrowserRouter>
+      <Toaster position="top-right" />
       <Routes>
+        {/* Public login page – no layout */}
+        <Route path="/login" element={<Login />} />
+
+        {/* All admin pages share the Layout */}
         <Route element={<Layout />}>
           <Route path="/" element={<Home />} />
           <Route path="/orders" element={<Orders />} />
@@ -54,11 +62,11 @@ export default function App() {
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/analytics/reports" element={<Reports />} />
           <Route path="/analytics/live-view" element={<LiveView />} />
-
-          {/* ✅ ADDED THE NEW PAGE ROUTE HERE! */}
           <Route path="/online-store" element={<OnlineStore />} />
-
         </Route>
+
+        {/* Fallback: send unknown routes to login */}
+        <Route path="*" element={<Navigate to="/login" />} />
       </Routes>
     </BrowserRouter>
   );

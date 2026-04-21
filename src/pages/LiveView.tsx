@@ -1,252 +1,309 @@
-import React, { useRef, Suspense } from 'react';
-import { Canvas } from '@react-three/fiber';
-import { OrbitControls, useTexture, Html } from '@react-three/drei';
-import * as THREE from 'three';
-import { Search, Eye, LayoutGrid, Maximize2, Plus } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Eye, Lock, Zap, Monitor, Smartphone, Tablet, RefreshCw, ChevronDown, Play, Loader2, Globe as GlobeIcon, MapPin, Server, Activity } from 'lucide-react';
+import Globe from 'react-globe.gl';
 
-// ─── 3D Text Label Component ──────────────────────────────────────────────────
-function GlobeLabel({ position, text, isOcean = false }: { position: [number, number, number], text: string, isOcean?: boolean }) {
-    return (
-        <Html
-            position={position}
-            center
-            // occlude allows labels on the back side of the earth to be hidden
-            occlude
-            style={{
-                transition: 'all 0.2s',
-                opacity: 1,
-                transform: 'scale(1)',
-            }}
-        >
-            <div
-                className={`px-2 py-0.5 rounded-md backdrop-blur-sm text-[11px] font-medium tracking-widest uppercase cursor-default select-none whitespace-nowrap
-        ${isOcean
-                        ? 'text-[#0ea5e9] bg-white/20 border border-white/30'
-                        : 'text-[#166534] bg-white/40 border border-white/50 shadow-sm'}`}
-            >
-                {text}
-            </div>
-        </Html>
-    );
-}
+// The 3D Photorealistic Globe Component
+function WorldGlobe() {
+    const globeEl = useRef<any>(null);
 
-// ─── Realistic Interactive Earth (Daytime with Labels) ────────────────────────
-function Earth() {
-    const earthRef = useRef<THREE.Group>(null);
+    useEffect(() => {
+        // Auto-rotate the globe slowly once it loads
+        if (globeEl.current) {
+            globeEl.current.controls().autoRotate = true;
+            globeEl.current.controls().autoRotateSpeed = 0.5;
+            globeEl.current.controls().enableZoom = true;
+        }
+    }, []);
 
-    // Load high-res textures
-    const [colorMap, normalMap, cloudsMap] = useTexture([
-        'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/earth_atmos_2048.jpg',
-        'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/earth_normal_2048.jpg',
-        'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/earth_clouds_1024.png'
-    ]);
+    // Custom labels for the regions (floating text in space)
+    const labelsData = [
+        { lat: 23.0225, lng: 72.5714, name: 'ASIA', size: 1.5, color: '#1a1a1a' },
+        { lat: 40.7128, lng: -74.0060, name: 'NORTH AMERICA', size: 1.5, color: '#1a1a1a' },
+        { lat: 51.5074, lng: -0.1278, name: 'EUROPE', size: 1.5, color: '#1a1a1a' },
+        { lat: -33.8688, lng: 151.2093, name: 'OCEANIA', size: 1.5, color: '#1a1a1a' }
+    ];
 
     return (
-        <group ref={earthRef}>
-            {/* Base Earth Sphere */}
-            <mesh>
-                <sphereGeometry args={[2.2, 64, 64]} />
-                <meshStandardMaterial
-                    map={colorMap}
-                    normalMap={normalMap}
-                    roughness={0.7}
-                    metalness={0.05}
-                />
-            </mesh>
-
-            {/* Cloud Layer */}
-            <mesh scale={[1.015, 1.015, 1.015]}>
-                <sphereGeometry args={[2.2, 64, 64]} />
-                <meshStandardMaterial
-                    map={cloudsMap}
-                    transparent={true}
-                    opacity={0.6}
-                    blending={THREE.AdditiveBlending}
-                    depthWrite={false}
-                    side={THREE.DoubleSide}
-                />
-            </mesh>
-
-            {/* ── Continent Labels ── */}
-            <GlobeLabel position={[1.4, 1.4, 0.9]} text="Europe" />
-            <GlobeLabel position={[0.5, 0.5, 2.1]} text="Africa" />
-            <GlobeLabel position={[-0.5, 1.5, -1.6]} text="North America" />
-            <GlobeLabel position={[-1.2, -0.6, -1.5]} text="South America" />
-            <GlobeLabel position={[2.0, 0.8, -0.6]} text="Asia" />
-            <GlobeLabel position={[2.0, -0.9, -0.2]} text="Australia" />
-            <GlobeLabel position={[0, -2.2, 0]} text="Antarctica" />
-
-            {/* ── Ocean Labels ── */}
-            <GlobeLabel position={[-2.2, 0, -0.2]} text="Pacific Ocean" isOcean />
-            <GlobeLabel position={[-0.8, 0.5, 2.0]} text="Atlantic Ocean" isOcean />
-            <GlobeLabel position={[1.6, -0.5, 1.2]} text="Indian Ocean" isOcean />
-            <GlobeLabel position={[0, 2.2, 0]} text="Arctic Ocean" isOcean />
-        </group>
-    );
-}
-
-function GlobeCanvas() {
-    return (
-        <Canvas
-            camera={{ position: [0, 0, 5.5], fov: 45 }}
-            style={{ width: '100%', height: '100%', background: 'transparent' }}
-            gl={{ alpha: true, antialias: true }}
-        >
-            {/* Studio Lighting Setup for "Daytime" look on all sides */}
-            <ambientLight intensity={1.8} />
-            <directionalLight position={[10, 10, 5]} intensity={1.5} color="#ffffff" />
-            <directionalLight position={[-10, -10, -5]} intensity={1.2} color="#f8fafc" />
-            <directionalLight position={[0, 0, 10]} intensity={0.5} color="#ffffff" />
-
-            <Suspense fallback={null}>
-                <Earth />
-            </Suspense>
-
-            {/* OrbitControls allows dragging, rotating, and zooming */}
-            <OrbitControls
-                enableZoom={true}
-                enablePan={false}
-                autoRotate={true}
-                autoRotateSpeed={0.8}
-                minDistance={2.8}
-                maxDistance={8}
+        <div className="relative w-full h-full flex items-center justify-center overflow-hidden bg-[#fafafa]">
+            
+            <Globe
+                ref={globeEl}
+                // High-resolution satellite textures
+                globeImageUrl="//unpkg.com/three-globe/example/img/earth-blue-marble.jpg"
+                bumpImageUrl="//unpkg.com/three-globe/example/img/earth-topology.png"
+                backgroundColor="rgba(0,0,0,0)" // Transparent background to blend with our #fafafa
+                
+                // 3D Floating Labels Configuration
+                labelsData={labelsData}
+                labelLat={(d: any) => d.lat}
+                labelLng={(d: any) => d.lng}
+                labelText={(d: any) => d.name}
+                labelSize={(d: any) => d.size}
+                labelDotRadius={0.5}
+                labelColor={(d: any) => d.color}
+                labelResolution={2}
+                labelAltitude={0.01}
+                
+                width={800}
+                height={650}
             />
-        </Canvas>
-    );
-}
-
-// ─── Stat Cards ───────────────────────────────────────────────────────────────
-function SparkFlat({ color = '#3b82f6' }: { color?: string }) {
-    return (
-        <svg viewBox="0 0 72 18" className="w-16 h-4 flex-shrink-0">
-            <line x1="0" y1="14" x2="72" y2="14" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
-        </svg>
-    );
-}
-
-function StatCard({ label, value, spark = false }: { label: string; value: string; spark?: boolean }) {
-    return (
-        <div className="bg-white rounded-xl border border-[#e8e8e8] shadow-sm p-4">
-            <div className="text-[12px] text-[#5c5f62] font-medium mb-2">{label}</div>
-            <div className="flex items-end justify-between gap-2">
-                <div className="flex items-baseline gap-1.5">
-                    <span className="text-[22px] font-bold text-[#1a1a1a] leading-none">{value}</span>
-                    {spark && <span className="text-[13px] text-[#9ca3af]">—</span>}
+            
+            {/* High-end Overlay UI over the Globe */}
+            <div className="absolute top-6 left-6 flex flex-col gap-3 pointer-events-none">
+                <div className="bg-white/80 backdrop-blur-md border border-[#e5e5e5] px-4 py-3 rounded-xl shadow-sm flex items-center gap-3">
+                    <div className="w-2.5 h-2.5 bg-[#008a5e] rounded-full animate-pulse" />
+                    <div>
+                        <p className="text-[11px] font-bold text-[#6b6b6b] uppercase tracking-wider mb-0.5">Primary Node</p>
+                        <p className="text-[14px] font-bold text-[#1a1a1a]">Ahmedabad, IN</p>
+                    </div>
                 </div>
-                {spark && <SparkFlat />}
+                
+                <div className="bg-white/80 backdrop-blur-md border border-[#e5e5e5] px-4 py-3 rounded-xl shadow-sm flex items-center gap-3">
+                    <Server className="w-4 h-4 text-[#6b6b6b]" strokeWidth={1.5} />
+                    <div>
+                        <p className="text-[11px] font-bold text-[#6b6b6b] uppercase tracking-wider mb-0.5">Global Edge Network</p>
+                        <p className="text-[14px] font-bold text-[#1a1a1a]">5 Active Regions</p>
+                    </div>
+                </div>
+            </div>
+
+            <div className="absolute bottom-6 right-6 bg-[#1a1a1a] text-white px-4 py-2.5 rounded-lg shadow-lg border border-[#333] flex items-center gap-2 pointer-events-none">
+                <Activity className="w-4 h-4 text-[#008a5e]" />
+                <span className="text-[13px] font-semibold">Store traffic live tracking</span>
             </div>
         </div>
     );
 }
 
-// ─── Empty Chart Card ─────────────────────────────────────────────────────────
-function EmptyCard({ title }: { title: string }) {
-    return (
-        <div className="bg-white rounded-xl border border-[#e8e8e8] shadow-sm p-4">
-            <div className="text-[13px] font-semibold text-[#1a1a1a] mb-4 border-b border-dashed border-[#d1d5db] pb-1 w-fit">
-                {title}
-            </div>
-            <div className="flex items-center justify-center h-[120px] text-[13px] text-[#9ca3af]">
-                No data for this date range
-            </div>
-        </div>
-    );
-}
+// The Main Admin Panel Interface
+export default function OnlineStore() {
+    const [device, setDevice] = useState<'desktop' | 'tablet' | 'mobile'>('desktop');
+    const [isLive, setIsLive] = useState(false);
+    const [isStarting, setIsStarting] = useState(false);
+    const [viewMode, setViewMode] = useState<'iframe' | 'globe'>('globe');
+    const STORE_URL = 'https://dvsk-alpha.vercel.app/'; // Change to http://localhost:3000 to preview your local frontend
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
-export default function LiveView() {
-    return (
-        <div className="h-screen flex flex-col font-sans overflow-hidden" style={{ background: '#f1f2f4' }}>
+    const deviceWidths = {
+        desktop: 'w-full',
+        tablet: 'w-[768px]',
+        mobile: 'w-[390px]',
+    };
 
-            {/* ── Top bar ── */}
-            <div className="flex items-center justify-between px-5 py-3 border-b border-[#e8e8e8] bg-[#f1f2f4] flex-shrink-0 z-10">
+    const handleGoLive = async () => {
+        setIsStarting(true);
+        try {
+            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001';
+            await fetch(`${API_URL}/api/start-store`, { method: 'POST' });
+
+            setTimeout(() => {
+                setIsLive(true);
+                setIsStarting(false);
+                setViewMode('iframe');
+            }, 3500);
+
+        } catch (error) {
+            console.error("Failed to start server", error);
+            setIsStarting(false);
+            alert(`Could not connect to backend.`);
+        }
+    };
+
+    return (
+        <div className="p-8 max-w-[1400px] mx-auto pb-20 animate-in fade-in duration-500">
+            {/* Header */}
+            <div className="flex justify-between items-end mb-8 pb-6">
+                <div>
+                    <h1 className="text-[28px] font-bold text-[#1a1a1a] tracking-tight">Online Store</h1>
+                    <p className="text-[14px] text-[#6b6b6b] mt-1">Manage and preview your live storefront globally.</p>
+                </div>
                 <div className="flex items-center gap-3">
-                    <svg className="w-5 h-5 text-[#1a1a1a]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                        <path d="M22 12h-4l-3 9L9 3l-3 9H2" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                    <h1 className="text-[18px] font-bold text-[#1a1a1a]">Live View</h1>
-                    <div className="flex items-center gap-1.5">
-                        <div className="w-2 h-2 rounded-full bg-[#22c55e] animate-pulse" />
-                        <span className="text-[12px] text-[#5c5f62]">Just now</span>
+                    {/* View Toggle */}
+                    <div className="flex bg-[#f4f4f5] p-1 rounded-lg border border-[#e5e5e5]">
+                        <button 
+                            onClick={() => setViewMode('globe')}
+                            className={`px-3 py-1.5 rounded-md text-[13px] font-semibold transition-all flex items-center gap-1.5 ${viewMode === 'globe' ? 'bg-white text-[#1a1a1a] shadow-sm border border-[#d1d5db]' : 'text-[#6b6b6b] hover:text-[#1a1a1a] border border-transparent'}`}
+                        >
+                            <GlobeIcon className="w-3.5 h-3.5" /> Network
+                        </button>
+                        <button 
+                            onClick={() => setViewMode('iframe')}
+                            className={`px-3 py-1.5 rounded-md text-[13px] font-semibold transition-all flex items-center gap-1.5 ${viewMode === 'iframe' ? 'bg-white text-[#1a1a1a] shadow-sm border border-[#d1d5db]' : 'text-[#6b6b6b] hover:text-[#1a1a1a] border border-transparent'}`}
+                        >
+                            <Eye className="w-3.5 h-3.5" /> Preview
+                        </button>
                     </div>
-                </div>
 
-                <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-2 bg-white border border-[#d1d5db] rounded-lg px-3 py-1.5 w-[230px] shadow-sm">
-                        <Search className="w-3.5 h-3.5 text-[#9ca3af] flex-shrink-0" />
-                        <input
-                            placeholder="Search location"
-                            className="flex-1 text-[13px] bg-transparent focus:outline-none placeholder-[#9ca3af]"
-                        />
-                    </div>
-                    <button className="p-1.5 hover:bg-white hover:border-[#e3e3e3] border border-transparent rounded-md transition-colors text-[#5c5f62]">
-                        <Eye className="w-5 h-5" />
-                    </button>
-                    <button className="p-1.5 hover:bg-white hover:border-[#e3e3e3] border border-transparent rounded-md transition-colors text-[#5c5f62]">
-                        <LayoutGrid className="w-5 h-5" />
-                    </button>
-                    <button className="p-1.5 hover:bg-white hover:border-[#e3e3e3] border border-transparent rounded-md transition-colors text-[#5c5f62]">
-                        <Maximize2 className="w-4 h-4" />
-                    </button>
+                    <a
+                        href={isLive ? STORE_URL : '#'}
+                        target={isLive ? "_blank" : "_self"}
+                        rel="noopener noreferrer"
+                        className={`group flex items-center gap-2 border px-4 py-2 rounded-xl text-[13px] font-semibold transition-all duration-300
+                            ${isLive
+                                ? 'bg-white border-[#d1d5db] text-[#1a1a1a] hover:border-[#1a1a1a] hover:shadow-sm'
+                                : 'bg-[#f4f4f5] border-transparent text-[#9a9a9a] cursor-not-allowed'}`}
+                    >
+                        <Eye className={`w-[15px] h-[15px] ${isLive ? 'text-[#6b6b6b] group-hover:text-[#1a1a1a]' : 'text-[#c4c4c4]'}`} strokeWidth={2} />
+                        View live store
+                    </a>
                 </div>
             </div>
 
-            {/* ── Body ── */}
-            <div className="flex flex-1 overflow-hidden">
+            {/* Main Content Area */}
+            <div className="space-y-8">
 
-                {/* ── Left panel ── */}
-                <div className="flex-shrink-0 overflow-y-auto border-r border-[#e8e8e8] p-4 space-y-3 relative z-10 bg-[#f1f2f4]" style={{ width: '460px' }}>
-                    <div className="grid grid-cols-2 gap-3">
-                        <StatCard label="Visitors right now" value="0" />
-                        <StatCard label="Total sales" value="₹0" spark />
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                        <StatCard label="Sessions" value="0" spark />
-                        <StatCard label="Orders" value="0" spark />
-                    </div>
-                    <div className="bg-white rounded-xl border border-[#e8e8e8] shadow-sm p-4">
-                        <div className="text-[13px] font-semibold text-[#1a1a1a] mb-4">Customer behavior</div>
-                        <div className="grid grid-cols-3 divide-x divide-[#f0f0f0]">
-                            {[['Active carts', '0'], ['Checking out', '0'], ['Purchased', '0']].map(([label, val]) => (
-                                <div key={label} className="px-3 first:pl-0 last:pr-0">
-                                    <div className="text-[11px] text-[#5c5f62] mb-1.5 leading-snug">{label}</div>
-                                    <div className="text-[22px] font-bold text-[#1a1a1a]">{val}</div>
-                                </div>
-                            ))}
+                {/* ── MASSIVE LIVE WINDOW ── */}
+                <div className="bg-white rounded-2xl border border-[#e5e5e5] shadow-[0_8px_30px_-4px_rgba(0,0,0,0.08)] overflow-hidden transition-all duration-300">
+
+                    {/* Browser Chrome Bar */}
+                    <div className="bg-[#f4f4f5] border-b border-[#e5e5e5] px-4 py-3 flex items-center gap-4">
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                            <div className="w-3 h-3 rounded-full bg-[#ff5f57] border border-[#e0443e]" />
+                            <div className="w-3 h-3 rounded-full bg-[#febc2e] border border-[#d89f24]" />
+                            <div className="w-3 h-3 rounded-full bg-[#28c840] border border-[#23a736]" />
+                        </div>
+
+                        <div className="flex-1 max-w-2xl bg-white border border-[#e5e5e5] rounded-lg px-3 py-1.5 flex items-center gap-2 shadow-sm mx-auto transition-all">
+                            {isLive ? (
+                                <Lock className="w-3.5 h-3.5 text-[#059669] flex-shrink-0" strokeWidth={2.5} />
+                            ) : (
+                                <Lock className="w-3.5 h-3.5 text-[#c4c4c4] flex-shrink-0" strokeWidth={2.5} />
+                            )}
+                            <span className={`text-[13px] truncate font-medium ${isLive ? 'text-[#1a1a1a]' : 'text-[#9a9a9a]'}`}>
+                                {viewMode === 'globe' ? 'global.network.dvsk.com' : STORE_URL}
+                            </span>
+                        </div>
+
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                            {viewMode === 'iframe' && (
+                                <>
+                                    <button onClick={() => setDevice('desktop')} className={`p-2 rounded-lg transition-all ${device === 'desktop' ? 'bg-[#1a1a1a] text-white shadow-sm' : 'text-[#6b6b6b] hover:bg-[#e4e4e7] hover:text-[#1a1a1a]'}`}>
+                                        <Monitor className="w-[18px] h-[18px]" strokeWidth={2} />
+                                    </button>
+                                    <button onClick={() => setDevice('tablet')} className={`p-2 rounded-lg transition-all ${device === 'tablet' ? 'bg-[#1a1a1a] text-white shadow-sm' : 'text-[#6b6b6b] hover:bg-[#e4e4e7] hover:text-[#1a1a1a]'}`}>
+                                        <Tablet className="w-[18px] h-[18px]" strokeWidth={2} />
+                                    </button>
+                                    <button onClick={() => setDevice('mobile')} className={`p-2 rounded-lg transition-all ${device === 'mobile' ? 'bg-[#1a1a1a] text-white shadow-sm' : 'text-[#6b6b6b] hover:bg-[#e4e4e7] hover:text-[#1a1a1a]'}`}>
+                                        <Smartphone className="w-[18px] h-[18px]" strokeWidth={2} />
+                                    </button>
+                                    <div className="w-px h-6 bg-[#d1d5db] mx-2" />
+                                </>
+                            )}
+                            
+                            <button
+                                onClick={() => {
+                                    if (viewMode === 'iframe' && isLive) {
+                                        const iframe = document.getElementById('store-preview') as HTMLIFrameElement;
+                                        if (iframe) iframe.src = iframe.src;
+                                    }
+                                }}
+                                className={`p-2 rounded-lg transition-all ${isLive || viewMode === 'globe' ? 'text-[#6b6b6b] hover:bg-[#e4e4e7] hover:text-[#1a1a1a]' : 'text-[#d1d5db] cursor-not-allowed'}`}
+                            >
+                                <RefreshCw className="w-[18px] h-[18px]" strokeWidth={2} />
+                            </button>
                         </div>
                     </div>
-                    <EmptyCard title="Sessions by location" />
-                    <EmptyCard title="New vs returning customers" />
+
+                    {/* Window Content Area */}
+                    <div className="bg-gradient-to-b from-[#e5e7eb] to-[#d1d5db] p-6 flex justify-center overflow-hidden transition-all duration-500" style={{ height: '650px' }}>
+                        
+                        {viewMode === 'globe' ? (
+                            // 🌍 THE STUNNING 3D GLOBE VIEW
+                            <div className="w-full h-full rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.15)] border border-[#e5e5e5] overflow-hidden">
+                                <WorldGlobe />
+                            </div>
+                        ) : (
+                            // 📱 THE IFRAME PREVIEW
+                            <div className={`${deviceWidths[device]} h-full transition-all duration-500 ease-out overflow-hidden rounded-xl shadow-[0_20px_50px_rgba(8,_112,_184,_0.07)] border border-[#e5e5e5] bg-white flex items-center justify-center`}>
+                                {isLive ? (
+                                    <iframe
+                                        id="store-preview"
+                                        src={STORE_URL}
+                                        title="Store Preview"
+                                        className="w-full h-full border-0 bg-white"
+                                    />
+                                ) : (
+                                    <div className="text-center">
+                                        <Monitor className="w-16 h-16 text-[#c4c4c4] mx-auto mb-4" strokeWidth={1} />
+                                        <h3 className="text-[#1a1a1a] font-semibold text-lg">Server is Offline</h3>
+                                        <p className="text-[#6b6b6b] text-sm mt-1">Click "Go Live" to start the frontend server</p>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Preview Footer Action Bar */}
+                    <div className="bg-white border-t border-[#e5e5e5] px-6 py-5 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            {isLive ? (
+                                <span className="flex items-center gap-2 bg-[#ecfdf5] text-[#008a5e] px-2.5 py-1 rounded-md text-[12px] font-bold border border-[#a7f3d0] uppercase tracking-wider">
+                                    <span className="relative flex h-2 w-2">
+                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#34d399] opacity-75"></span>
+                                        <span className="relative inline-flex rounded-full h-2 w-2 bg-[#059669]"></span>
+                                    </span>
+                                    Live
+                                </span>
+                            ) : (
+                                <span className="flex items-center gap-2 bg-[#f4f4f5] text-[#6b6b6b] px-2.5 py-1 rounded-md text-[12px] font-bold border border-[#e5e5e5] uppercase tracking-wider">
+                                    <div className="w-2 h-2 rounded-full bg-[#9a9a9a]" />
+                                    Offline
+                                </span>
+                            )}
+                            <span className="text-[14px] font-bold text-[#1a1a1a]">
+                                DVSK Frontend
+                            </span>
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                            <button className="flex items-center gap-1 text-[13px] font-semibold text-[#1a1a1a] hover:bg-[#f4f4f5] px-3 py-2 rounded-lg transition-colors border border-transparent hover:border-[#e5e5e5]">
+                                Actions <ChevronDown className="w-4 h-4 text-[#6b6b6b]" strokeWidth={2} />
+                            </button>
+
+                            {/* ✅ THE GO LIVE BUTTON */}
+                            <button
+                                onClick={handleGoLive}
+                                disabled={isLive || isStarting}
+                                className={`px-5 py-2.5 rounded-xl text-[14px] font-semibold transition-colors flex items-center gap-2 shadow-sm duration-200
+                                    ${isLive
+                                        ? 'bg-[#ecfdf5] text-[#008a5e] border border-[#a7f3d0]'
+                                        : 'bg-[#1a1a1a] text-white hover:bg-[#333] hover:-translate-y-0.5 active:translate-y-0'}`}
+                            >
+                                {isStarting ? (
+                                    <><Loader2 className="w-4 h-4 animate-spin" /> Starting Server...</>
+                                ) : isLive ? (
+                                    <><div className="w-2 h-2 rounded-full bg-[#008a5e] animate-pulse" /> Server Running</>
+                                ) : (
+                                    <><Play className="w-4 h-4 fill-current" /> Go Live</>
+                                )}
+                            </button>
+                        </div>
+                    </div>
                 </div>
 
-                {/* ── Right panel — Interactive Realistic Globe ── */}
-                <div className="flex-1 relative overflow-hidden bg-transparent flex items-center justify-center cursor-move">
-
-                    {/* Subtle soft glow behind the globe to separate it from the background */}
-                    <div className="absolute w-[500px] h-[500px] bg-white rounded-full blur-[80px] opacity-40 pointer-events-none" />
-
-                    <GlobeCanvas />
-
-                    {/* Floating Action Buttons */}
-                    <div className="absolute bottom-5 right-5 flex items-center gap-5 bg-white/70 backdrop-blur-md border border-[#e5e7eb] rounded-xl px-4 py-2.5 shadow-sm">
-                        <div className="flex items-center gap-1.5 text-[12px] text-[#5c5f62]">
-                            <div className="w-2.5 h-2.5 rounded-full bg-[#7c3aed]" /> Orders
+                {/* Theme Library Section */}
+                <div className="bg-white rounded-2xl shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] border border-[#e5e5e5] overflow-hidden">
+                    <div className="p-6 border-b border-[#e5e5e5] flex justify-between items-center bg-[#fcfcfc]">
+                        <div>
+                            <h2 className="text-[15px] font-bold text-[#1a1a1a]">Theme library</h2>
+                            <p className="text-[13px] text-[#6b6b6b]">Manage and preview up to 20 themes</p>
                         </div>
-                        <div className="flex items-center gap-1.5 text-[12px] text-[#5c5f62]">
-                            <div className="w-2.5 h-2.5 rounded-full bg-[#3b82f6]" /> Visitors right now
-                        </div>
+                        <button className="text-[13px] font-semibold text-[#005bd3] hover:text-[#004299]">Add theme</button>
                     </div>
 
-                    {/* Plus button */}
-                    <button className="absolute bottom-5 left-1/2 -translate-x-1/2 w-8 h-8 bg-white border border-[#e3e3e3] rounded-full flex items-center justify-center shadow-md hover:bg-[#f5f5f5] transition-colors">
-                        <Plus className="w-4 h-4 text-[#1a1a1a]" />
-                    </button>
-
-                    {/* Hint instruction */}
-                    <div className="absolute top-5 right-5 text-[#9ca3af] text-[11px] font-medium tracking-wide pointer-events-none bg-white/50 px-2 py-1 rounded-md backdrop-blur-sm">
-                        DRAG TO ROTATE • SCROLL TO ZOOM
+                    <div className="p-12 flex flex-col items-center justify-center text-center bg-[#fafafa]">
+                        <div className="w-16 h-16 bg-white rounded-full shadow-sm border border-[#e5e5e5] flex items-center justify-center mb-5">
+                            <Zap className="w-7 h-7 text-[#fbbf24]" strokeWidth={1.5} />
+                        </div>
+                        <h3 className="text-[16px] font-bold text-[#1a1a1a] mb-2">Build your dream storefront</h3>
+                        <p className="text-[14px] text-[#6b6b6b] max-w-md mb-6">
+                            Explore the Theme Store to find the perfect look for your brand, or securely upload a custom theme zip file.
+                        </p>
+                        <button className="bg-white border border-[#d1d5db] text-[#1a1a1a] px-6 py-2.5 rounded-xl text-[14px] font-semibold hover:bg-[#f3f4f6] transition-all shadow-sm hover:shadow active:scale-[0.98]">
+                            Explore themes
+                        </button>
                     </div>
                 </div>
+
             </div>
         </div>
     );

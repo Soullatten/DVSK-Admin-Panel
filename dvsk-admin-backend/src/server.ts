@@ -18,12 +18,13 @@ const app = express();
 
 // ✅ CORS — must be the VERY FIRST middleware
 app.use(cors({
-  origin: '*',
+  origin: '*', // or restrict to your admin frontend URL later
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
 }));
-app.options('*', cors());
 
+// ❌ Do NOT use app.options('*', ...) in Express 5 – it breaks path-to-regexp
+// Preflight OPTIONS requests will still be handled by app.use(cors(...))
 app.use(express.json());
 
 // API Routes
