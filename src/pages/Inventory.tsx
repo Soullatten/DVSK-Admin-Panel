@@ -1,7 +1,12 @@
 import React, { useEffect, useState } from "react";
 import { Package, Plus, Edit, Trash2, Loader2 } from "lucide-react";
 import toast from "react-hot-toast";
-import { productService } from "../api/productService"; // adjust path if needed
+import { productService } from "../api/productService";
+import {
+  uploadProductImage,
+  attachProductImages,
+  addProductVariants,
+} from "../api/uploadService";
 
 type Category = "men" | "women" | "accessories";
 
@@ -20,7 +25,8 @@ export default function Inventory() {
   const [loading, setLoading] = useState(true);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [activeCategory, setActiveCategory] = useState<"all" | Category>("all");
+  const [activeCategory, setActiveCategory] =
+    useState<"all" | Category>("all");
 
   const [formData, setFormData] = useState<{
     title: string;
@@ -28,20 +34,26 @@ export default function Inventory() {
     price: string;
     description: string;
     category: Category;
+    sizes: string[];
+    stock: string;
   }>({
     title: "",
     slug: "",
     price: "",
     description: "",
     category: "men",
+    sizes: ["M"],
+    stock: "0",
   });
+
+  const [imageFiles, setImageFiles] = useState<File[]>([]);
 
   // Load products from backend
   const fetchProducts = async () => {
     setLoading(true);
     try {
       const res = await productService.listProducts();
-      const data = (res?.data ?? res?.products ?? res) as unknown;
+      const data = (res?.data ?? (res as any)?.products ?? res) as unknown;
       setProducts(Array.isArray(data) ? (data as Product[]) : []);
     } catch (error) {
       toast.error("Failed to load products");
@@ -67,25 +79,78 @@ export default function Inventory() {
     }));
   };
 
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files ? Array.from(e.target.files) : [];
+    setImageFiles(files);
+  };
+
+  const toggleSize = (size: string) => {
+    setFormData((prev) => {
+      const exists = prev.sizes.includes(size);
+      return {
+        ...prev,
+        sizes: exists
+          ? prev.sizes.filter((s) => s !== size)
+          : [...prev.sizes, size],
+      };
+    });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     const payload = {
-      ...formData,
+      title: formData.title,
+      slug: formData.slug,
       price: Number(formData.price) || 0,
+      description: formData.description,
       category: formData.category,
+      stock: Number(formData.stock) || 0,
     };
 
-    const actionPromise = editingId
-      ? productService.updateProduct(editingId, payload)
-      : productService.createProduct(payload);
+    const actionPromise = (async () => {
+      if (editingId) {
+        await productService.updateProduct(editingId, payload);
+        // TODO: handle variants + images on edit later
+        return "updated";
+      } else {
+        // 1) Create product
+        const res = await productService.createProduct(payload);
+        const product = (res as any).data ?? res;
+
+        // 2) Add variants (sizes) with the same stock for each
+        if (formData.sizes && formData.sizes.length > 0) {
+          await addProductVariants(product.id, {
+            sizes: formData.sizes,
+            color: "Default",
+            stock: Number(formData.stock) || 0,
+          });
+        }
+
+        // 3) Upload all images and attach
+        if (imageFiles.length > 0) {
+          const uploaded: { url: string }[] = [];
+
+          for (const file of imageFiles) {
+            const uploadRes = await uploadProductImage(file);
+            const url = (uploadRes as any).data.url;
+            uploaded.push({ url });
+          }
+
+          await attachProductImages(product.id, uploaded);
+        }
+
+        return "created";
+      }
+    })();
 
     toast.promise(actionPromise, {
       loading: editingId ? "Updating product..." : "Creating product...",
-      success: () => {
+      success: (result: "created" | "updated") => {
         fetchProducts();
         closeForm();
-        return editingId ? "Product updated!" : "Product created!";
+        setImageFiles([]);
+        return result === "updated" ? "Product updated!" : "Product created!";
       },
       error: (err: any) =>
         err?.response?.data?.message || "Failed to save product",
@@ -114,6 +179,8 @@ export default function Inventory() {
       price: product.price?.toString() || "",
       description: product.description || "",
       category: (product.category as Category) || "men",
+      sizes: ["M"], // we don't load existing variants yet
+      stock: "0",
     });
     setEditingId(product.id);
     setIsFormOpen(true);
@@ -128,7 +195,10 @@ export default function Inventory() {
       price: "",
       description: "",
       category: "men",
+      sizes: ["M"],
+      stock: "0",
     });
+    setImageFiles([]);
   };
 
   const filteredProducts =
@@ -202,6 +272,25 @@ export default function Inventory() {
 
               <div>
                 <label className="block text-[13px] font-medium text-[#6b6b6b] mb-1">
+                  Stock (per size)
+                </label>
+                <input
+                  required
+                  name="stock"
+                  type="number"
+                  min={0}
+                  step={1}
+                  className="w-full border border-[#e8e8e8] rounded-lg px-3 py-2 text-[14px] outline-none focus:border-[#1a1a1a]"
+                  value={formData.stock}
+                  onChange={handleChange}
+                />
+                <p className="text-[11px] text-[#a0a0a0] mt-1">
+                  This quantity will be set for each selected size variant.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-[13px] font-medium text-[#6b6b6b] mb-1">
                   Price
                 </label>
                 <input
@@ -231,6 +320,53 @@ export default function Inventory() {
                 </select>
               </div>
 
+              {/* Sizes */}
+              <div className="md:col-span-2">
+                <label className="block text-[13px] font-medium text-[#6b6b6b] mb-1">
+                  Sizes
+                </label>
+                <div className="flex gap-2 flex-wrap">
+                  {["S", "M", "L", "XL"].map((size) => {
+                    const active = formData.sizes.includes(size);
+                    return (
+                      <button
+                        key={size}
+                        type="button"
+                        onClick={() => toggleSize(size)}
+                        className={`px-3 py-1 rounded-full border text-[13px] ${
+                          active
+                            ? "bg-[#1a1a1a] text-white border-[#1a1a1a]"
+                            : "bg-white text-[#6b6b6b] border-[#e8e8e8] hover:bg-[#f9f9f9]"
+                        }`}
+                      >
+                        {size}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] text-[#a0a0a0] mt-1">
+                  Select all sizes available for this product.
+                </p>
+              </div>
+
+              {/* Images */}
+              <div className="md:col-span-2">
+                <label className="block text-[13px] font-medium text-[#6b6b6b] mb-1">
+                  Product images
+                </label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={handleImageChange}
+                  className="w-full border border-[#e8e8e8] rounded-lg px-3 py-2 text-[14px] outline-none focus:border-[#1a1a1a]"
+                />
+                <p className="text-[11px] text-[#a0a0a0] mt-1">
+                  Optional. Upload one or more images. The first one becomes
+                  the cover.
+                </p>
+              </div>
+
               <div className="md:col-span-2">
                 <label className="block text-[13px] font-medium text-[#6b6b6b] mb-1">
                   Description
@@ -253,7 +389,7 @@ export default function Inventory() {
                 </button>
                 <button
                   type="submit"
-                  className="bg-[#1a1a1a] text-white text-[13px] font-semibold px-6 py-2 rounded-lg hover:bg-black transition-all shadow-sm"
+                  className="bg-[#1a1a1a] text-white text-[13px] font-semibold px-6 py-2 rounded-lg hover:bg:black transition-all shadow-sm"
                 >
                   {editingId ? "Save Changes" : "Create"}
                 </button>

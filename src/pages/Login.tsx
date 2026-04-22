@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth } from "../lib/firebase";
-import { apiClient, setAuthToken } from "../api/client";
+import { setAuthToken } from "../api/client";
 import toast from "react-hot-toast";
 import { useNavigate } from "react-router-dom";
 
@@ -14,28 +14,25 @@ export default function Login() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+
     try {
-      // 1) Firebase login
+      // 1) Sign in with Firebase (client SDK)
       const cred = await signInWithEmailAndPassword(auth, email, password);
       const user = cred.user;
 
       // 2) Get Firebase ID token
-      const firebaseToken = await user.getIdToken(); // this is what your backend verifies[web:238]
+      const firebaseToken = await user.getIdToken();
 
-      // 3) Tell your DVSK backend about this login
-      await apiClient.post("/auth/login", { firebaseToken });
-
-      // 4) Save token for all admin API calls
+      // 3) Save token for ALL admin API calls
+      //    This token will be verified by dvsk-admin-backend's protectAdmin middleware[web:238][web:240]
       setAuthToken(firebaseToken);
 
       toast.success("Logged in");
-      navigate("/inventory");
+      // 4) Go to inventory page protected by /api/products
+      navigate("/products/inventory");
     } catch (err: any) {
       console.error(err);
-      const msg =
-        err?.response?.data?.error?.message ||
-        err?.message ||
-        "Login failed";
+      const msg = err?.message || "Login failed";
       toast.error(msg);
     } finally {
       setLoading(false);

@@ -7,9 +7,8 @@ export interface AdminRequest extends Request {
 }
 
 export const protectAdmin = async (req: AdminRequest, res: Response, next: NextFunction): Promise<void> => {
-  // 1. ALLOW PREFLIGHT REQUESTS TO PASS
   if (req.method === 'OPTIONS') {
-    next(); 
+    next();
     return;
   }
 
@@ -17,18 +16,25 @@ export const protectAdmin = async (req: AdminRequest, res: Response, next: NextF
     const token = req.headers.authorization?.split(' ')[1];
 
     if (!token) {
-      // Return a proper status so you can see it in DevTools (not Status 0)
       res.status(401).json({ message: 'Not authorized - No token' });
       return;
     }
 
     const decodedToken = await admin.auth().verifyIdToken(token);
 
+    console.log("Decoded token:", {
+      uid: decodedToken.uid,
+      email: decodedToken.email,
+    });
+
     const user = await prisma.user.findUnique({
       where: { firebaseUid: decodedToken.uid }
     });
 
+    console.log("Prisma user:", user);
+
     if (!user || (user.role !== 'ADMIN' && user.role !== 'SUPER_ADMIN')) {
+      console.log("Auth check failed, user or role invalid");
       res.status(403).json({ message: 'Forbidden - Admins only' });
       return;
     }

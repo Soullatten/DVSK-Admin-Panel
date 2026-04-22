@@ -39,3 +39,15 @@ export const productService = {
     return response.data;
   }
 };
+
+export const createProduct = (payload: {
+  name: string;
+  slug: string;
+  description: string;
+  shortDesc?: string;
+  basePrice: string;  // Decimal as string "1999.00"
+  salePrice?: string;
+  categoryId: string;
+  tag?: "NEW_SEASON" | "CORE" | "ESSENTIALS" | "LIMITED_EDITION" | "SALE";
+  gender: "MEN" | "WOMEN" | "UNISEX";
+}) => apiClient.post("/products", payload);

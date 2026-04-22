@@ -185,7 +185,7 @@ model Payment {
 }
 
 model ProductImage {
-  id        String  @id
+  id        String  @id @default(cuid())
   productId String
   url       String
   alt       String?
