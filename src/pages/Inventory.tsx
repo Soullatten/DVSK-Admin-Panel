@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Package, Plus, Edit, Trash2, Loader2 } from "lucide-react";
+import { Package, Plus, Edit, Trash2, Loader2, ImagePlus, X } from "lucide-react";
 import toast from "react-hot-toast";
 import { productService } from "../api/productService";
 import {
@@ -25,8 +25,7 @@ export default function Inventory() {
   const [loading, setLoading] = useState(true);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [activeCategory, setActiveCategory] =
-    useState<"all" | Category>("all");
+  const [activeCategory, setActiveCategory] = useState<"all" | Category>("all");
 
   const [formData, setFormData] = useState<{
     title: string;
@@ -46,9 +45,10 @@ export default function Inventory() {
     stock: "0",
   });
 
+  const [coverFile, setCoverFile] = useState<File | null>(null);
+  const [coverPreview, setCoverPreview] = useState<string | null>(null);
   const [imageFiles, setImageFiles] = useState<File[]>([]);
 
-  // Load products from backend
   const fetchProducts = async () => {
     setLoading(true);
     try {
@@ -68,9 +68,7 @@ export default function Inventory() {
   }, []);
 
   const handleChange = (
-    e: React.ChangeEvent<
-      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
-    >
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
   ) => {
     const { name, value } = e.target;
     setFormData((prev) => ({
@@ -78,6 +76,30 @@ export default function Inventory() {
       [name]: name === "category" ? (value as Category) : value,
     }));
   };
+
+  // ── Cover photo handlers ──────────────────────────────────────────────────
+  const handleCoverChange = (file: File) => {
+    setCoverFile(file);
+    setCoverPreview(URL.createObjectURL(file));
+  };
+
+  const handleCoverInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleCoverChange(file);
+  };
+
+  const handleCoverDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files?.[0];
+    if (file && file.type.startsWith("image/")) handleCoverChange(file);
+  };
+
+  const removeCover = () => {
+    setCoverFile(null);
+    if (coverPreview) URL.revokeObjectURL(coverPreview);
+    setCoverPreview(null);
+  };
+  // ─────────────────────────────────────────────────────────────────────────
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files ? Array.from(e.target.files) : [];
@@ -89,9 +111,7 @@ export default function Inventory() {
       const exists = prev.sizes.includes(size);
       return {
         ...prev,
-        sizes: exists
-          ? prev.sizes.filter((s) => s !== size)
-          : [...prev.sizes, size],
+        sizes: exists ? prev.sizes.filter((s) => s !== size) : [...prev.sizes, size],
       };
     });
   };
@@ -111,14 +131,13 @@ export default function Inventory() {
     const actionPromise = (async () => {
       if (editingId) {
         await productService.updateProduct(editingId, payload);
-        // TODO: handle variants + images on edit later
         return "updated";
       } else {
         // 1) Create product
         const res = await productService.createProduct(payload);
         const product = (res as any).data ?? res;
 
-        // 2) Add variants (sizes) with the same stock for each
+        // 2) Add variants
         if (formData.sizes && formData.sizes.length > 0) {
           await addProductVariants(product.id, {
             sizes: formData.sizes,
@@ -127,16 +146,18 @@ export default function Inventory() {
           });
         }
 
-        // 3) Upload all images and attach
-        if (imageFiles.length > 0) {
-          const uploaded: { url: string }[] = [];
+        // 3) Upload cover first (it will be index 0 = cover), then additional images
+        const allFiles: File[] = [];
+        if (coverFile) allFiles.push(coverFile);
+        allFiles.push(...imageFiles);
 
-          for (const file of imageFiles) {
+        if (allFiles.length > 0) {
+          const uploaded: { url: string }[] = [];
+          for (const file of allFiles) {
             const uploadRes = await uploadProductImage(file);
             const url = (uploadRes as any).data.url;
             uploaded.push({ url });
           }
-
           await attachProductImages(product.id, uploaded);
         }
 
@@ -149,7 +170,6 @@ export default function Inventory() {
       success: (result: "created" | "updated") => {
         fetchProducts();
         closeForm();
-        setImageFiles([]);
         return result === "updated" ? "Product updated!" : "Product created!";
       },
       error: (err: any) =>
@@ -158,9 +178,7 @@ export default function Inventory() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!window.confirm("Are you sure you want to delete this product?")) {
-      return;
-    }
+    if (!window.confirm("Are you sure you want to delete this product?")) return;
 
     toast.promise(productService.deleteProduct(id), {
       loading: "Deleting...",
@@ -179,7 +197,7 @@ export default function Inventory() {
       price: product.price?.toString() || "",
       description: product.description || "",
       category: (product.category as Category) || "men",
-      sizes: ["M"], // we don't load existing variants yet
+      sizes: ["M"],
       stock: "0",
     });
     setEditingId(product.id);
@@ -198,6 +216,7 @@ export default function Inventory() {
       sizes: ["M"],
       stock: "0",
     });
+    removeCover();
     setImageFiles([]);
   };
 
@@ -205,8 +224,7 @@ export default function Inventory() {
     activeCategory === "all"
       ? products
       : products.filter(
-          (p) =>
-            (p.category || "").toString().toLowerCase() === activeCategory
+          (p) => (p.category || "").toString().toLowerCase() === activeCategory
         );
 
   return (
@@ -240,10 +258,75 @@ export default function Inventory() {
             <h2 className="text-[16px] font-bold text-[#1a1a1a] mb-4">
               {editingId ? "Edit Product" : "Add New Product"}
             </h2>
-            <form
-              onSubmit={handleSubmit}
-              className="grid grid-cols-1 md:grid-cols-2 gap-4"
-            >
+            <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+              {/* ── Cover Photo ─────────────────────────────────────────── */}
+              <div className="md:col-span-2">
+                <label className="block text-[13px] font-medium text-[#6b6b6b] mb-1">
+                  Cover Photo
+                </label>
+
+                {coverPreview ? (
+                  /* Preview state */
+                  <div className="relative w-full h-48 rounded-xl overflow-hidden border border-[#e8e8e8] group">
+                    <img
+                      src={coverPreview}
+                      alt="Cover preview"
+                      className="w-full h-full object-cover"
+                    />
+                    {/* dark overlay on hover */}
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+                      {/* Replace cover */}
+                      <label className="cursor-pointer bg-white/90 hover:bg-white text-[#1a1a1a] text-[12px] font-semibold px-3 py-1.5 rounded-lg transition-colors">
+                        Change
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={handleCoverInputChange}
+                        />
+                      </label>
+                      {/* Remove cover */}
+                      <button
+                        type="button"
+                        onClick={removeCover}
+                        className="bg-white/90 hover:bg-red-50 text-red-500 text-[12px] font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1"
+                      >
+                        <X className="w-3.5 h-3.5" /> Remove
+                      </button>
+                    </div>
+                    {/* "Cover" badge */}
+                    <span className="absolute top-2 left-2 bg-[#1a1a1a]/70 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full">
+                      Cover
+                    </span>
+                  </div>
+                ) : (
+                  /* Drop-zone state */
+                  <div
+                    onDrop={handleCoverDrop}
+                    onDragOver={(e) => e.preventDefault()}
+                    className="w-full h-36 rounded-xl border-2 border-dashed border-[#e0e0e0] hover:border-[#1a1a1a] transition-colors flex flex-col items-center justify-center gap-2 cursor-pointer bg-[#fafafa] hover:bg-[#f4f4f4]"
+                    onClick={() => document.getElementById("cover-input")?.click()}
+                  >
+                    <ImagePlus className="w-7 h-7 text-[#a0a0a0]" />
+                    <p className="text-[13px] font-medium text-[#6b6b6b]">
+                      Click or drag & drop a cover photo
+                    </p>
+                    <p className="text-[11px] text-[#a0a0a0]">
+                      PNG, JPG, WEBP — shown as the main product image
+                    </p>
+                    <input
+                      id="cover-input"
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleCoverInputChange}
+                    />
+                  </div>
+                )}
+              </div>
+              {/* ──────────────────────────────────────────────────────────── */}
+
               <div>
                 <label className="block text-[13px] font-medium text-[#6b6b6b] mb-1">
                   Title
@@ -349,10 +432,11 @@ export default function Inventory() {
                 </p>
               </div>
 
-              {/* Images */}
+              {/* Additional Images */}
               <div className="md:col-span-2">
                 <label className="block text-[13px] font-medium text-[#6b6b6b] mb-1">
-                  Product images
+                  Additional images{" "}
+                  <span className="text-[#a0a0a0] font-normal">(optional)</span>
                 </label>
                 <input
                   type="file"
@@ -362,8 +446,7 @@ export default function Inventory() {
                   className="w-full border border-[#e8e8e8] rounded-lg px-3 py-2 text-[14px] outline-none focus:border-[#1a1a1a]"
                 />
                 <p className="text-[11px] text-[#a0a0a0] mt-1">
-                  Optional. Upload one or more images. The first one becomes
-                  the cover.
+                  Upload extra gallery images. Cover photo will always appear first.
                 </p>
               </div>
 
@@ -389,7 +472,7 @@ export default function Inventory() {
                 </button>
                 <button
                   type="submit"
-                  className="bg-[#1a1a1a] text-white text-[13px] font-semibold px-6 py-2 rounded-lg hover:bg:black transition-all shadow-sm"
+                  className="bg-[#1a1a1a] text-white text-[13px] font-semibold px-6 py-2 rounded-lg hover:bg-black transition-all shadow-sm"
                 >
                   {editingId ? "Save Changes" : "Create"}
                 </button>
@@ -398,7 +481,7 @@ export default function Inventory() {
           </div>
         )}
 
-        {/* Products List */}
+        {/* Products List — unchanged below */}
         <div className="bg-white rounded-xl border border-[#e8e8e8] shadow-sm overflow-hidden">
           {loading ? (
             <div className="flex flex-col items-center justify-center py-24 text-[#6b6b6b]">
@@ -410,9 +493,7 @@ export default function Inventory() {
               <div className="w-24 h-24 bg-[#f9f9f9] rounded-full flex items-center justify-center mb-6">
                 <Package className="w-10 h-10 text-[#a0a0a0]" />
               </div>
-              <h2 className="text-[15px] font-bold text-[#1a1a1a] mb-2">
-                No products found
-              </h2>
+              <h2 className="text-[15px] font-bold text-[#1a1a1a] mb-2">No products found</h2>
               <p className="text-[13px] text-[#6b6b6b] mb-6 max-w-[300px] text-center">
                 Add your first product to start tracking inventory.
               </p>
@@ -425,7 +506,6 @@ export default function Inventory() {
             </div>
           ) : (
             <>
-              {/* Category filter bar */}
               <div className="flex items-center justify-between px-6 pt-4 pb-2">
                 <div className="text-[13px] text-[#6b6b6b]">
                   Showing {filteredProducts.length} products
@@ -439,9 +519,7 @@ export default function Inventory() {
                   ].map((tab) => (
                     <button
                       key={tab.key}
-                      onClick={() =>
-                        setActiveCategory(tab.key as "all" | Category)
-                      }
+                      onClick={() => setActiveCategory(tab.key as "all" | Category)}
                       className={`px-3 py-1 rounded-full border ${
                         activeCategory === tab.key
                           ? "bg-[#1a1a1a] text-white border-[#1a1a1a]"

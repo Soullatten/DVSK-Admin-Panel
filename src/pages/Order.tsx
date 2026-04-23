@@ -1,19 +1,21 @@
 import React, { useState, useRef, useEffect } from "react";
 import {
-  ChevronLeft,
-  ChevronRight,
-  Info,
-  CheckCircle2,
-  XCircle,
+  Calendar,
   Search,
   Filter,
-  Calendar,
 } from "lucide-react";
 import toast from "react-hot-toast";
-import { orderService } from "../api/orderService";
+import { orderService} from "../api/orderService";
 import type { ApiOrder } from "../api/orderService";
+import type { OrderStatsSummary } from "../api/orderService";
 
-interface Order {
+// Helper to convert numbers to formatted ₹ string
+const formatMoney = (val: string | number) => {
+  const num = Number(val || 0);
+  return isNaN(num) ? "₹0.00" : `₹${num.toFixed(2)}`;
+};
+
+interface MappedOrder {
   id: string; // backend id
   orderNumber: string;
   date: string;
@@ -24,127 +26,14 @@ interface Order {
   items: number;
 }
 
-// Data organized by time periods (still demo – you can wire later)
-const statsData = {
-  Today: [
-    {
-      label: "Orders",
-      value: "2",
-      trend: "↑ 50%",
-      data: [0, 1, 0, 0, 1, 0, 2],
-      isNegative: false,
-    },
-    {
-      label: "Items ordered",
-      value: "4",
-      trend: "↑ 10%",
-      data: [0, 2, 0, 0, 1, 0, 4],
-      isNegative: false,
-    },
-    {
-      label: "Returns",
-      value: "₹0",
-      trend: "—",
-      info: true,
-      data: [0, 0, 0, 0, 0, 0, 0],
-      isNegative: true,
-    },
-    {
-      label: "Orders fulfilled",
-      value: "0",
-      trend: "↓ 100%",
-      data: [0, 0, 0, 0, 0, 0, 0],
-      isNegative: false,
-    },
-    {
-      label: "Orders delivered",
-      value: "0",
-      trend: "—",
-      data: [0, 0, 0, 0, 0, 0, 0],
-      isNegative: false,
-    },
-  ],
-  "Last 7 days": [
-    {
-      label: "Orders",
-      value: "15",
-      trend: "↑ 12%",
-      data: [1, 3, 2, 5, 2, 0, 2],
-      isNegative: false,
-    },
-    {
-      label: "Items ordered",
-      value: "45",
-      trend: "↑ 8%",
-      data: [2, 8, 5, 12, 5, 0, 4],
-      isNegative: false,
-    },
-    {
-      label: "Returns",
-      value: "₹5,600",
-      trend: "↓ 2%",
-      info: true,
-      data: [0, 0, 0, 5600, 0, 0, 0],
-      isNegative: true,
-    },
-    {
-      label: "Orders fulfilled",
-      value: "12",
-      trend: "↑ 5%",
-      data: [1, 2, 2, 4, 3, 0, 0],
-      isNegative: false,
-    },
-    {
-      label: "Orders delivered",
-      value: "10",
-      trend: "↑ 15%",
-      data: [1, 1, 3, 3, 2, 0, 0],
-      isNegative: false,
-    },
-  ],
-  "Last 30 days": [
-    {
-      label: "Orders",
-      value: "84",
-      trend: "↑ 24%",
-      data: [12, 15, 10, 22, 18, 25, 15],
-      isNegative: false,
-    },
-    {
-      label: "Items ordered",
-      value: "216",
-      trend: "↑ 31%",
-      data: [25, 40, 30, 55, 45, 60, 45],
-      isNegative: false,
-    },
-    {
-      label: "Returns",
-      value: "₹12,400",
-      trend: "↑ 5%",
-      info: true,
-      data: [1200, 0, 3400, 2200, 0, 5600, 0],
-      isNegative: true,
-    },
-    {
-      label: "Orders fulfilled",
-      value: "78",
-      trend: "↑ 20%",
-      data: [10, 14, 10, 20, 18, 23, 12],
-      isNegative: false,
-    },
-    {
-      label: "Orders delivered",
-      value: "75",
-      trend: "↑ 22%",
-      data: [10, 12, 10, 18, 16, 22, 10],
-      isNegative: false,
-    },
-  ],
-};
-
 type TimeFilter = "Today" | "Last 7 days" | "Last 30 days";
 
+// Dynamic Sparkline component that scales to actual data
 const Sparkline = ({ data, color }: { data: number[]; color: string }) => {
+  if (!data || data.length === 0) {
+    return <div className="mt-2 text-[10px] text-[#a0a0a0]">No data</div>;
+  }
+  
   const max = Math.max(...data);
   const min = Math.min(...data);
   const range = max - min || 1;
@@ -173,94 +62,97 @@ const Sparkline = ({ data, color }: { data: number[]; color: string }) => {
   );
 };
 
-export default function Orders() {
-  const [orders, setOrders] = useState<Order[]>([]);
+export default function Order() {
+  const [orders, setOrders] = useState<MappedOrder[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [loading, setLoading] = useState(true);
 
+  // Stats State
+  const [statsSummary, setStatsSummary] = useState<OrderStatsSummary | null>(null);
+  
   // Date Dropdown State
   const [isDateDropdownOpen, setIsDateDropdownOpen] = useState(false);
-  const [selectedDateFilter, setSelectedDateFilter] =
-    useState<TimeFilter>("Today");
+  const [selectedDateFilter, setSelectedDateFilter] = useState<TimeFilter>("Last 30 days");
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Stats pagination
-  const currentStats = statsData[selectedDateFilter];
-  const [statPage, setStatPage] = useState(0);
-  const visibleStats = currentStats.slice(statPage * 4, statPage * 4 + 4);
-  const canGoBack = statPage > 0;
-  const canGoForward = (statPage + 1) * 4 < currentStats.length;
+  // Load real orders from backend
+  const fetchOrders = async () => {
+    setLoading(true);
+    try {
+      const apiOrders = await orderService.list();
 
-  // Load real orders from admin backend
+      const mapped: MappedOrder[] = apiOrders.map((o: ApiOrder) => {
+        const paymentStatus = o.Payment?.status || "PENDING";
+        let payment: MappedOrder["payment"];
+        switch (paymentStatus) {
+          case "SUCCESS":
+          case "CAPTURED":
+            payment = "Paid";
+            break;
+          case "FAILED":
+            payment = "Declined";
+            break;
+          case "REFUNDED":
+            payment = "Refunded";
+            break;
+          case "PENDING":
+          default:
+            payment = "Pending";
+        }
+
+        const orderStatus = o.status || "PENDING";
+        let fulfillment: MappedOrder["fulfillment"];
+        if (orderStatus === "DELIVERED" || orderStatus === "SHIPPED") {
+          fulfillment = "Fulfilled";
+        } else if (orderStatus === "RETURNED") {
+          fulfillment = "Returned";
+        } else {
+          fulfillment = "Unfulfilled";
+        }
+
+        return {
+          id: o.id,
+          orderNumber: o.orderNumber ? `#${o.orderNumber}` : `#${o.id.slice(0, 6)}`,
+          date: new Date(o.createdAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }),
+          customer: o.User?.name || o.User?.email || "Guest Customer",
+          total: formatMoney(o.total),
+          payment,
+          fulfillment,
+          items: o.items?.length || 0,
+        };
+      });
+
+      setOrders(mapped);
+    } catch (error) {
+      console.error(error);
+      toast.error("Failed to load orders");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Load dynamic stats from backend
+  const fetchStats = async () => {
+    try {
+      const stats = await orderService.stats();
+      setStatsSummary(stats);
+    } catch (error) {
+      console.error("Failed to load stats", error);
+    }
+  };
+
   useEffect(() => {
-    const loadOrders = async () => {
-      try {
-        const apiOrders = await orderService.list();
-
-        const mapped: Order[] = apiOrders.map((o: ApiOrder) => {
-          const paymentStatus = o.Payment?.status || "PENDING";
-          let payment: Order["payment"];
-          switch (paymentStatus) {
-            case "SUCCESS":
-              payment = "Paid";
-              break;
-            case "FAILED":
-              payment = "Declined";
-              break;
-            case "REFUNDED":
-              payment = "Refunded";
-              break;
-            case "PENDING":
-            default:
-              payment = "Pending";
-          }
-
-          const orderStatus = o.status || "PENDING";
-          let fulfillment: Order["fulfillment"];
-          if (orderStatus === "DELIVERED" || orderStatus === "SHIPPED") {
-            fulfillment = "Fulfilled";
-          } else if (orderStatus === "RETURNED") {
-            fulfillment = "Returned";
-          } else {
-            fulfillment = "Unfulfilled";
-          }
-
-          const totalNumber = Number(o.total);
-
-          return {
-            id: o.id,
-            orderNumber: o.orderNumber
-              ? `#${o.orderNumber}`
-              : `#${o.id.slice(0, 6)}`,
-            date: new Date(o.createdAt).toLocaleString(),
-            customer:
-              o.User?.name || o.User?.email || "Customer",
-            total: `₹${isNaN(totalNumber) ? "0" : totalNumber.toFixed(2)}`,
-            payment,
-            fulfillment,
-            items: o.items?.length || 0,
-          };
-        });
-
-        setOrders(mapped);
-      } catch (error) {
-        console.error(error);
-        toast.error("Failed to load orders");
-      }
-    };
-
-    loadOrders();
+    fetchOrders();
+    fetchStats();
   }, []);
 
   const filteredOrders = orders.filter((order) =>
-    `${order.customer} ${order.orderNumber} ${order.payment}`
+    `${order.customer} ${order.orderNumber} ${order.payment} ${order.fulfillment}`
       .toLowerCase()
       .includes(searchQuery.toLowerCase())
   );
 
-  const handlePaymentAction = async (
-    id: string,
-    action: "accept" | "decline"
-  ) => {
+  const handlePaymentAction = async (id: string, action: "accept" | "decline") => {
     try {
       const newStatus = action === "accept" ? "PROCESSING" : "CANCELLED";
       await orderService.updateStatus(id, newStatus);
@@ -271,14 +163,13 @@ export default function Orders() {
             ? {
                 ...order,
                 payment: action === "accept" ? "Paid" : "Declined",
-                fulfillment:
-                  action === "accept" ? "Fulfilled" : "Returned",
+                fulfillment: action === "accept" ? "Fulfilled" : "Returned",
               }
             : order
         )
       );
 
-      toast.success("Order updated");
+      toast.success(action === "accept" ? "Order accepted" : "Order declined");
     } catch (error) {
       console.error(error);
       toast.error("Failed to update order");
@@ -287,16 +178,17 @@ export default function Orders() {
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(event.target as Node)
-      ) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setIsDateDropdownOpen(false);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  // Compute graph data arrays from real stats
+  const dailyCounts = statsSummary?.daily.map(d => d.count) || [];
+  const dailyRevenue = statsSummary?.daily.map(d => d.revenue) || [];
 
   return (
     <div
@@ -310,333 +202,172 @@ export default function Orders() {
         {/* Page Header */}
         <div className="flex items-center justify-between mb-5">
           <div className="flex items-center gap-2.5">
-            <svg
-              viewBox="0 0 20 20"
-              fill="none"
-              className="w-5 h-5 text-[#1a1a1a]"
-            >
-              <rect
-                x="3"
-                y="3"
-                width="14"
-                height="14"
-                rx="2"
-                stroke="currentColor"
-                strokeWidth="1.5"
-              />
-              <path
-                d="M3 8h14"
-                stroke="currentColor"
-                strokeWidth="1.5"
-              />
-              <path
-                d="M7 12h2M11 12h2"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-              />
+            <svg viewBox="0 0 20 20" fill="none" className="w-5 h-5 text-[#1a1a1a]">
+              <rect x="3" y="3" width="14" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" />
+              <path d="M3 8h14" stroke="currentColor" strokeWidth="1.5" />
+              <path d="M7 12h2M11 12h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
-            <h1 className="text-[22px] font-bold text-[#1a1a1a] tracking-tight">
-              Orders
-            </h1>
+            <h1 className="text-[22px] font-bold text-[#1a1a1a] tracking-tight">Orders</h1>
           </div>
-          <button
-            onClick={() => toast.success("Action clicked!")}
-            className="flex items-center gap-1.5 bg-[#1a1a1a] text-white text-[13px] font-semibold px-4 py-1.5 rounded-lg hover:bg-black transition-all shadow-sm"
-          >
-            Create order
-          </button>
         </div>
 
-        {/* Stats Bar with Dropdown */}
+        {/* Dynamic Stats Bar */}
         <div className="bg-white rounded-xl border border-[#e8e8e8] shadow-sm mb-6 flex items-stretch overflow-visible">
-          <div
-            className="relative border-r border-[#f0f0f0] flex"
-            ref={dropdownRef}
-          >
+          <div className="relative border-r border-[#f0f0f0] flex" ref={dropdownRef}>
             <button
               onClick={() => setIsDateDropdownOpen(!isDateDropdownOpen)}
               className="flex items-center gap-2 px-5 py-3.5 hover:bg-[#f9f9f9] transition-colors h-full min-w-[120px] text-left focus:outline-none"
             >
               <Calendar className="w-4 h-4 text-[#6b6b6b]" />
-              <span className="text-[13px] font-semibold text-[#1a1a1a]">
-                {selectedDateFilter}
-              </span>
+              <span className="text-[13px] font-semibold text-[#1a1a1a]">{selectedDateFilter}</span>
             </button>
 
             {isDateDropdownOpen && (
-              <div className="absolute top-[105%] left-2 w-[300px] bg-white rounded-xl shadow-[0_8px_30px_rgba(0,0,0,0.12)] border border-[#e3e3e3] p-1 z-50">
-                {[
-                  {
-                    label: "Today",
-                    desc: "Compared to yesterday up to current hour",
-                  },
-                  {
-                    label: "Last 7 days",
-                    desc: "Compared to the previous 7 days",
-                  },
-                  {
-                    label: "Last 30 days",
-                    desc: "Compared to the previous 30 days",
-                  },
-                ].map((option) => (
+              <div className="absolute top-[105%] left-2 w-[200px] bg-white border border-[#e8e8e8] rounded-xl shadow-lg py-1.5 z-50">
+                {(["Today", "Last 7 days", "Last 30 days"] as TimeFilter[]).map((filter) => (
                   <button
-                    key={option.label}
+                    key={filter}
                     onClick={() => {
-                      setSelectedDateFilter(option.label as TimeFilter);
-                      setStatPage(0);
+                      setSelectedDateFilter(filter);
                       setIsDateDropdownOpen(false);
                     }}
-                    className="w-full flex items-start gap-3 p-3 hover:bg-[#f5f5f5] rounded-lg transition-colors text-left group"
+                    className="w-full text-left px-4 py-2 text-[13px] hover:bg-[#f9f9f9] text-[#1a1a1a]"
                   >
-                    <div className="pt-[3px]">
-                      <div
-                        className={`w-[14px] h-[14px] rounded-full border-[4px] 
-                        ${
-                          selectedDateFilter === option.label
-                            ? "border-[#1a1a1a]"
-                            : "border-[#d4d4d4] group-hover:border-[#a3a3a3]"
-                        }`}
-                      />
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="text-[13px] font-medium text-[#1a1a1a] mb-0.5">
-                        {option.label}
-                      </span>
-                      <span className="text-[12px] text-[#6b6b6b]">
-                        {option.desc}
-                      </span>
-                    </div>
+                    {filter}
                   </button>
                 ))}
               </div>
             )}
           </div>
 
-          {/* Dynamic Stats Cards */}
-          <div className="flex flex-1 overflow-hidden">
-            {visibleStats.map((stat, i) => (
-              <div
-                key={stat.label}
-                className={`flex-1 px-5 py-3 ${
-                  i < visibleStats.length - 1
-                    ? "border-r border-[#f0f0f0]"
-                    : ""
-                }`}
-              >
-                <div className="flex items-center gap-1 mb-1">
-                  <span className="text-[12px] text-[#6b6b6b] font-medium border-b border-dashed border-[#c4c4c4] pb-[1px]">
-                    {stat.label}
-                  </span>
-                  {stat.info && (
-                    <Info className="w-3 h-3 text-[#9a9a9a]" />
-                  )}
+          <div className="flex flex-1 overflow-x-auto no-scrollbar">
+            <div className="flex min-w-max">
+              <div className="px-6 py-4 border-r border-[#f0f0f0] min-w-[180px]">
+                <div className="text-[12px] text-[#6b6b6b] border-b border-dashed border-[#e8e8e8] pb-1 inline-block mb-1">
+                  Orders
                 </div>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[16px] font-bold text-[#1a1a1a]">
-                      {stat.value}
-                    </span>
-                    <span className="text-[12px] text-[#6b6b6b] font-medium">
-                      {stat.trend}
-                    </span>
-                  </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-[16px] font-bold text-[#1a1a1a]">{statsSummary?.totalOrders || 0}</span>
                 </div>
-                <Sparkline
-                  data={stat.data}
-                  color={stat.isNegative ? "#e8694a" : "#3aada8"}
-                />
+                <Sparkline data={dailyCounts} color="#5C8B82" />
               </div>
-            ))}
-          </div>
-
-          <div className="flex items-center gap-0 border-l border-[#f0f0f0] px-2">
-            <button
-              onClick={() => setStatPage((p) => Math.max(0, p - 1))}
-              disabled={!canGoBack}
-              className="p-1.5 rounded-md hover:bg-[#f5f5f5] disabled:opacity-30"
-            >
-              <ChevronLeft className="w-4 h-4 text-[#4a4a4a]" />
-            </button>
-            <button
-              onClick={() => setStatPage((p) => p + 1)}
-              disabled={!canGoForward}
-              className="p-1.5 rounded-md hover:bg-[#f5f5f5] disabled:opacity-30"
-            >
-              <ChevronRight className="w-4 h-4 text-[#4a4a4a]" />
-            </button>
+              <div className="px-6 py-4 border-r border-[#f0f0f0] min-w-[180px]">
+                <div className="text-[12px] text-[#6b6b6b] border-b border-dashed border-[#e8e8e8] pb-1 inline-block mb-1">
+                  Total Revenue
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-[16px] font-bold text-[#1a1a1a]">{formatMoney(statsSummary?.totalRevenue || 0)}</span>
+                </div>
+                <Sparkline data={dailyRevenue} color="#5C8B82" />
+              </div>
+              <div className="px-6 py-4 border-r border-[#f0f0f0] min-w-[180px]">
+                <div className="text-[12px] text-[#6b6b6b] border-b border-dashed border-[#e8e8e8] pb-1 inline-block mb-1">
+                  Active Days
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-[16px] font-bold text-[#1a1a1a]">{statsSummary?.daily.length || 0}</span>
+                </div>
+                {/* Flat line for constant metric */}
+                <Sparkline data={[1,1,1]} color="#D98A7A" />
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Orders Table */}
-        <div className="bg-white rounded-xl border border-[#e8e8e8] shadow-sm overflow-hidden">
-          <div className="p-3 border-b border-[#f0f0f0] flex items-center justify-between bg-[#fafafa]">
-            <div className="flex items-center gap-2 flex-1">
-              <div className="relative flex-1 max-w-md">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#8a8a8a]" />
+        {/* Orders Table Area */}
+        <div className="bg-white rounded-xl border border-[#e8e8e8] shadow-sm">
+          {/* Toolbar */}
+          <div className="flex items-center justify-between p-2 border-b border-[#e8e8e8]">
+            <div className="flex items-center gap-2 flex-1 max-w-[600px]">
+              <div className="flex items-center bg-[#fdfdfd] border border-[#e8e8e8] rounded-md px-3 py-1.5 flex-1 focus-within:border-[#1a1a1a] transition-colors">
+                <Search className="w-4 h-4 text-[#9b9b9b] mr-2 flex-shrink-0" />
                 <input
                   type="text"
                   placeholder="Filter orders"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full bg-white border border-[#e3e3e3] rounded-md pl-9 pr-3 py-1.5 text-[13px] focus:outline-none focus:border-[#8a8a8a] focus:ring-1 focus:ring-[#8a8a8a] transition-all shadow-sm"
+                  className="bg-transparent border-none outline-none text-[13px] text-[#1a1a1a] w-full placeholder:text-[#9b9b9b]"
                 />
               </div>
-              <button
-                onClick={() => toast.success("Action clicked!")}
-                className="bg-white border border-[#e3e3e3] text-[#1a1a1a] text-[13px] font-semibold px-3 py-1.5 rounded-md hover:bg-[#f5f5f5] flex items-center gap-2 shadow-sm transition-colors"
-              >
-                <Filter className="w-3.5 h-3.5" /> Filter
+              <button className="flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium text-[#1a1a1a] bg-white border border-[#e8e8e8] rounded-md hover:bg-[#f9f9f9] transition-colors shadow-sm">
+                <Filter className="w-4 h-4" /> Filter
               </button>
             </div>
           </div>
 
-          <div className="overflow-x-auto">
-            {filteredOrders.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-20 text-[#6b6b6b]">
-                <Search className="w-8 h-8 mb-3 text-[#d4d4d4]" />
-                <p className="text-[14px] font-medium text-[#1a1a1a]">
-                  No orders found
-                </p>
-                <p className="text-[13px]">
-                  Try changing your search or filters
-                </p>
+          {/* Table */}
+          {loading ? (
+             <div className="py-24 flex justify-center text-[13px] text-[#6b6b6b]">Loading orders...</div>
+          ) : filteredOrders.length === 0 ? (
+            <div className="py-24 flex flex-col items-center justify-center text-center">
+              <div className="w-12 h-12 rounded-full bg-[#f9f9f9] flex items-center justify-center mb-3">
+                <Search className="w-5 h-5 text-[#a0a0a0]" />
               </div>
-            ) : (
+              <h3 className="text-[14px] font-semibold text-[#1a1a1a] mb-1">No orders found</h3>
+              <p className="text-[13px] text-[#6b6b6b] max-w-[250px]">
+                Try changing your search or filters to find what you're looking for.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="bg-white border-b border-[#f0f0f0]">
-                    <th className="px-4 py-2.5 text-[12px] font-semibold text-[#1a1a1a] w-12">
-                      <input
-                        type="checkbox"
-                        className="rounded border-gray-300"
-                      />
-                    </th>
-                    <th className="px-4 py-2.5 text-[12px] font-semibold text-[#1a1a1a]">
-                      Order
-                    </th>
-                    <th className="px-4 py-2.5 text-[12px] font-semibold text-[#1a1a1a]">
-                      Date
-                    </th>
-                    <th className="px-4 py-2.5 text-[12px] font-semibold text-[#1a1a1a]">
-                      Customer
-                    </th>
-                    <th className="px-4 py-2.5 text-[12px] font-semibold text-[#1a1a1a]">
-                      Total
-                    </th>
-                    <th className="px-4 py-2.5 text-[12px] font-semibold text-[#1a1a1a]">
-                      Payment status
-                    </th>
-                    <th className="px-4 py-2.5 text-[12px] font-semibold text-[#1a1a1a]">
-                      Fulfillment status
-                    </th>
-                    <th className="px-4 py-2.5 text-[12px] font-semibold text-[#1a1a1a]">
-                      Items
-                    </th>
-                    <th className="px-4 py-2.5 text-[12px] font-semibold text-[#1a1a1a] text-right">
-                      Actions
-                    </th>
+                  <tr className="border-b border-[#e8e8e8]">
+                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b6b6b] w-[12%]">Order</th>
+                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b6b6b] w-[18%]">Date</th>
+                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b6b6b] w-[20%]">Customer</th>
+                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b6b6b] text-right w-[15%]">Total</th>
+                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b6b6b] w-[15%]">Payment</th>
+                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b6b6b] w-[15%]">Fulfillment</th>
+                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b6b6b] w-[5%]">Items</th>
                   </tr>
                 </thead>
-                <tbody className="text-[13px]">
+                <tbody>
                   {filteredOrders.map((order) => (
-                    <tr
-                      key={order.id}
-                      className="border-b border-[#f5f5f5] hover:bg-[#fafafa] transition-colors group"
-                    >
-                      <td className="px-4 py-3">
-                        <input
-                          type="checkbox"
-                          className="rounded border-gray-300"
-                        />
-                      </td>
-                      <td className="px-4 py-3 font-semibold text-[#1a1a1a]">
-                        {order.orderNumber}
-                      </td>
-                      <td className="px-4 py-3 text-[#6b6b6b]">
-                        {order.date}
-                      </td>
-                      <td className="px-4 py-3 text-[#1a1a1a]">
-                        {order.customer}
-                      </td>
-                      <td className="px-4 py-3 text-[#1a1a1a]">
-                        {order.total}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[12px] font-medium border
-                          ${
-                            order.payment === "Paid"
-                              ? "bg-[#e0f5e9] border-[#b0e3c5] text-[#136b32]"
-                              : order.payment === "Pending"
-                              ? "bg-[#fef0d5] border-[#fce0ab] text-[#855a00]"
-                              : order.payment === "Declined"
-                              ? "bg-[#ffe4e0] border-[#ffc5c0] text-[#a11e12]"
-                              : "bg-[#f5f5f5] border-[#e8e8e8] text-[#4a4a4a]"
-                          }`}
-                        >
-                          <div
-                            className={`w-1.5 h-1.5 rounded-full 
-                            ${
-                              order.payment === "Paid"
-                                ? "bg-[#136b32]"
-                                : order.payment === "Pending"
-                                ? "bg-[#d99400]"
-                                : order.payment === "Declined"
-                                ? "bg-[#d82c20]"
-                                : "bg-[#8a8a8a]"
-                            }`}
-                          ></div>
-                          {order.payment}
+                    <tr key={order.id} className="border-b border-[#e8e8e8] hover:bg-[#fcfcfc] transition-colors group cursor-pointer">
+                      <td className="px-5 py-3">
+                        <span className="text-[13px] font-semibold text-[#1a1a1a] hover:underline">
+                          {order.orderNumber}
                         </span>
                       </td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[12px] font-medium border
-                          ${
-                            order.fulfillment === "Fulfilled"
-                              ? "bg-[#f5f5f5] border-[#e8e8e8] text-[#1a1a1a]"
-                              : order.fulfillment === "Returned"
-                              ? "bg-[#ffe4e0] border-[#ffc5c0] text-[#a11e12]"
-                              : "bg-[#fff5cc] border-[#ffe899] text-[#8a6100]"
-                          }`}
-                        >
+                      <td className="px-5 py-3 text-[13px] text-[#6b6b6b]">{order.date}</td>
+                      <td className="px-5 py-3 text-[13px] text-[#1a1a1a]">{order.customer}</td>
+                      <td className="px-5 py-3 text-[13px] text-[#1a1a1a] text-right">{order.total}</td>
+                      <td className="px-5 py-3">
+                        <div className="flex items-center gap-1.5">
+                          {order.payment === "Pending" ? (
+                            <div className="flex items-center gap-1">
+                              <span className="inline-flex px-2 py-0.5 rounded text-[11px] font-medium bg-[#fff8e6] text-[#b38a00] border border-[#ffeeba]">
+                                Pending
+                              </span>
+                              <div className="opacity-0 group-hover:opacity-100 flex items-center transition-opacity ml-1">
+                                <button onClick={(e) => { e.stopPropagation(); handlePaymentAction(order.id, "accept"); }} className="p-0.5 hover:bg-green-50 text-green-600 rounded">
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 6L9 17l-5-5"/></svg>
+                                </button>
+                                <button onClick={(e) => { e.stopPropagation(); handlePaymentAction(order.id, "decline"); }} className="p-0.5 hover:bg-red-50 text-red-600 rounded ml-0.5">
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <span className={`inline-flex px-2 py-0.5 rounded text-[11px] font-medium border ${order.payment === "Paid" ? "bg-[#f4fbf7] text-[#1e7e4c] border-[#d1f0e0]" : "bg-[#fdf3f4] text-[#c93b3b] border-[#fad5d9]"}`}>
+                              {order.payment}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-5 py-3">
+                        <span className={`inline-flex px-2 py-0.5 rounded text-[11px] font-medium border ${order.fulfillment === "Fulfilled" ? "bg-[#f5f5f5] text-[#4a4a4a] border-[#e0e0e0]" : "bg-[#fff8e6] text-[#b38a00] border-[#ffeeba]"}`}>
                           {order.fulfillment}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-[#6b6b6b]">
-                        {order.items} items
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        {order.payment === "Pending" ? (
-                          <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button
-                              onClick={() =>
-                                handlePaymentAction(order.id, "accept")
-                              }
-                              className="p-1 hover:bg-[#e0f5e9] text-[#136b32] rounded transition-colors"
-                              title="Accept Payment"
-                            >
-                              <CheckCircle2 className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() =>
-                                handlePaymentAction(order.id, "decline")
-                              }
-                              className="p-1 hover:bg-[#ffe4e0] text-[#a11e12] rounded transition-colors"
-                              title="Decline Payment"
-                            >
-                              <XCircle className="w-4 h-4" />
-                            </button>
-                          </div>
-                        ) : null}
-                      </td>
+                      <td className="px-5 py-3 text-[13px] text-[#6b6b6b]">{order.items}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
