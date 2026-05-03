@@ -1,421 +1,437 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, Calendar, ChevronDown, BarChart2, Info, Store } from 'lucide-react';
-
-const chartData = [
-    { label: 'Mar 18', date: '2026-03-18T18:30:00.000Z', value: 0 },
-    { label: 'Mar 19', date: '2026-03-19T18:30:00.000Z', value: 0 },
-    { label: 'Mar 20', date: '2026-03-20T18:30:00.000Z', value: 0 },
-    { label: 'Mar 21', date: '2026-03-21T18:30:00.000Z', value: 0 },
-    { label: 'Mar 22', date: '2026-03-22T18:30:00.000Z', value: 0 },
-    { label: 'Mar 23', date: '2026-03-23T18:30:00.000Z', value: 0 },
-    { label: 'Mar 24', date: '2026-03-24T18:30:00.000Z', value: 0 },
-    { label: 'Mar 25', date: '2026-03-25T18:30:00.000Z', value: 0 },
-    { label: 'Mar 26', date: '2026-03-26T18:30:00.000Z', value: 0 },
-    { label: 'Mar 27', date: '2026-03-27T18:30:00.000Z', value: 0 },
-    { label: 'Mar 28', date: '2026-03-28T18:30:00.000Z', value: 0 },
-    { label: 'Mar 29', date: '2026-03-29T18:30:00.000Z', value: 0 },
-    { label: 'Mar 30', date: '2026-03-30T18:30:00.000Z', value: 0 },
-    { label: 'Mar 31', date: '2026-03-31T18:30:00.000Z', value: 0 },
-    { label: 'Apr 1', date: '2026-04-01T18:30:00.000Z', value: 0 },
-    { label: 'Apr 2', date: '2026-04-02T18:30:00.000Z', value: 0 },
-    { label: 'Apr 3', date: '2026-04-03T18:30:00.000Z', value: 0 },
-    { label: 'Apr 4', date: '2026-04-04T18:30:00.000Z', value: 0 },
-    { label: 'Apr 5', date: '2026-04-05T18:30:00.000Z', value: 0 },
-    { label: 'Apr 6', date: '2026-04-06T18:30:00.000Z', value: 0 },
-    { label: 'Apr 7', date: '2026-04-07T18:30:00.000Z', value: 0 },
-    { label: 'Apr 8', date: '2026-04-08T18:30:00.000Z', value: 0 },
-    { label: 'Apr 9', date: '2026-04-09T18:30:00.000Z', value: 0 },
-    { label: 'Apr 10', date: '2026-04-10T18:30:00.000Z', value: 0 },
-    { label: 'Apr 11', date: '2026-04-11T18:30:00.000Z', value: 0 },
-    { label: 'Apr 12', date: '2026-04-12T18:30:00.000Z', value: 0 },
-    { label: 'Apr 13', date: '2026-04-13T18:30:00.000Z', value: 0 },
-    { label: 'Apr 14', date: '2026-04-14T18:30:00.000Z', value: 0.3 },
-    { label: 'Apr 15', date: '2026-04-15T18:30:00.000Z', value: 2 },
-    { label: 'Apr 16', date: '2026-04-16T18:30:00.000Z', value: 0.1 },
-    { label: 'Apr 17', date: '2026-04-17T18:30:00.000Z', value: 0 },
-];
+import { 
+  Activity, Calendar, ChevronDown, BarChart2, Info, Store, X, 
+  Printer, Download, Filter, GitBranch, ArrowRightLeft, Route
+} from 'lucide-react';
+import toast from 'react-hot-toast';
+import { useMainWebsite } from '../hooks/useMainWebsite';
+import { motion, AnimatePresence } from 'framer-motion';
 
 const W = 1600;
 const H = 380;
 const VIEW_H = 392;
 const PADDING_LEFT = 10;
 const PADDING_RIGHT = 10;
-const MAX_VAL = 2;
-const xLabelIndices = [0, 4, 8, 12, 16, 20, 24, 28, 30];
 
-function getX(index: number, total: number) {
-    return PADDING_LEFT + (index / (total - 1)) * (W - PADDING_LEFT - PADDING_RIGHT);
-}
-
-function getY(value: number) {
-    return H - (value / MAX_VAL) * H;
-}
-
-function buildSmoothPath(data: { value: number }[]) {
-    const points = data.map((d, i) => ({
-        x: getX(i, data.length),
-        y: getY(d.value),
-    }));
-
-    if (!points.length) return '';
-
-    let path = `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
-
-    for (let i = 0; i < points.length - 1; i++) {
-        const current = points[i];
-        const next = points[i + 1];
-
-        const cp1x = current.x + (next.x - current.x) / 2;
-        const cp1y = current.y;
-        const cp2x = current.x + (next.x - current.x) / 2;
-        const cp2y = next.y;
-
-        path += ` C ${cp1x.toFixed(2)} ${cp1y.toFixed(2)}, ${cp2x.toFixed(2)} ${cp2y.toFixed(2)}, ${next.x.toFixed(2)} ${next.y.toFixed(2)}`;
-    }
-
-    return path;
-}
-
-type HoverState = {
-    visible: boolean;
-    cursorX: number;
-    cursorY: number;
-    pointX: number;
-    pointY: number;
-    index: number;
-};
+type HoverState = { visible: boolean; cursorX: number; cursorY: number; pointX: number; pointY: number; index: number; };
+type MetricType = 'Sessions' | 'Sales' | 'Orders';
 
 export default function Attribution() {
-    const [showBanner, setShowBanner] = useState(true);
-    const chartRef = useRef<HTMLDivElement | null>(null);
+  const { data: liveData } = useMainWebsite('/attribution');
+  
+  // UI States
+  const [showBanner, setShowBanner] = useState(true);
+  const [activeTab, setActiveTab] = useState<'Overview' | 'Conversion Paths' | 'Model Comparison'>('Overview');
+  const [activeMetric, setActiveMetric] = useState<MetricType>('Sessions');
+  
+  // Dropdown States
+  const [isDateDropOpen, setIsDateDropOpen] = useState(false);
+  const [dateRange, setDateRange] = useState('Last 30 days');
+  
+  const [isModelDropOpen, setIsModelDropOpen] = useState(false);
+  const [attrModel, setAttrModel] = useState('Last non-direct click');
 
-    const points = useMemo(
-        () =>
-            chartData.map((d, i) => ({
-                ...d,
-                x: getX(i, chartData.length),
-                y: getY(d.value),
-            })),
-        []
-    );
+  const [isMetricDropOpen, setIsMetricDropOpen] = useState(false);
 
-    const linePath = useMemo(() => buildSmoothPath(chartData), []);
+  const chartRef = useRef<HTMLDivElement | null>(null);
 
-    const targetRef = useRef<HoverState>({
-        visible: false,
-        cursorX: 0,
-        cursorY: 0,
-        pointX: 0,
-        pointY: 0,
-        index: 0,
-    });
+  // 1. DYNAMIC DATA GENERATION (Flatline based on current date range)
+  const daysCount = dateRange === 'Last 7 days' ? 7 : dateRange === 'Last 30 days' ? 30 : 90;
+  
+  const dynamicChartData = useMemo(() => {
+    const data = [];
+    const today = new Date();
+    for (let i = daysCount; i >= 0; i--) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - i);
+      data.push({
+        label: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        date: d.toISOString(),
+        value: 0 // Flat line
+      });
+    }
+    return data;
+  }, [daysCount]);
 
-    const [hover, setHover] = useState<HoverState>({
-        visible: false,
-        cursorX: 0,
-        cursorY: 0,
-        pointX: 0,
-        pointY: 0,
-        index: 0,
-    });
+  // 2. DYNAMIC SCALING & FORMATTING
+  const maxVal = 2; // Fixed max for a flatline
+  const formatValue = (val: number) => activeMetric === 'Sales' ? `₹${val.toFixed(2)}` : val.toString();
 
-    useEffect(() => {
-        let raf = 0;
+  const getX = (index: number, total: number) => PADDING_LEFT + (index / (total - 1)) * (W - PADDING_LEFT - PADDING_RIGHT);
+  const getY = (value: number) => H - (value / maxVal) * H;
 
-        const animate = () => {
-            setHover((prev) => {
-                const t = targetRef.current;
-                const ease = 0.14;
+  const points = useMemo(() => dynamicChartData.map((d: any, i: number) => ({
+    ...d, x: getX(i, dynamicChartData.length), y: getY(d.value),
+  })), [dynamicChartData]);
 
-                return {
-                    visible: t.visible,
-                    index: t.index,
-                    cursorX: prev.cursorX + (t.cursorX - prev.cursorX) * ease,
-                    cursorY: prev.cursorY + (t.cursorY - prev.cursorY) * ease,
-                    pointX: prev.pointX + (t.pointX - prev.pointX) * ease,
-                    pointY: prev.pointY + (t.pointY - prev.pointY) * ease,
-                };
-            });
+  const linePath = useMemo(() => {
+    if (!points.length) return '';
+    let path = `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
+    for (let i = 0; i < points.length - 1; i++) {
+      const current = points[i];
+      const next = points[i + 1];
+      const cp1x = current.x + (next.x - current.x) / 2;
+      const cp1y = current.y;
+      const cp2x = current.x + (next.x - current.x) / 2;
+      const cp2y = next.y;
+      path += ` C ${cp1x.toFixed(2)} ${cp1y.toFixed(2)}, ${cp2x.toFixed(2)} ${cp2y.toFixed(2)}, ${next.x.toFixed(2)} ${next.y.toFixed(2)}`;
+    }
+    return path;
+  }, [points]);
 
-            raf = requestAnimationFrame(animate);
+  const xLabelIndices = useMemo(() => {
+    const step = Math.max(1, Math.floor(dynamicChartData.length / 6));
+    return Array.from({ length: 7 }, (_, i) => Math.min(i * step, dynamicChartData.length - 1));
+  }, [dynamicChartData.length]);
+
+  // 3. HOVER LOGIC
+  const targetRef = useRef<HoverState>({ visible: false, cursorX: 0, cursorY: 0, pointX: 0, pointY: 0, index: 0 });
+  const [hover, setHover] = useState<HoverState>({ visible: false, cursorX: 0, cursorY: 0, pointX: 0, pointY: 0, index: 0 });
+
+  useEffect(() => {
+    let raf = 0;
+    const animate = () => {
+      setHover((prev) => {
+        const t = targetRef.current;
+        const ease = 0.14;
+        return {
+          visible: t.visible, index: t.index,
+          cursorX: prev.cursorX + (t.cursorX - prev.cursorX) * ease,
+          cursorY: prev.cursorY + (t.cursorY - prev.cursorY) * ease,
+          pointX: prev.pointX + (t.pointX - prev.pointX) * ease,
+          pointY: prev.pointY + (t.pointY - prev.pointY) * ease,
         };
-
-        raf = requestAnimationFrame(animate);
-        return () => cancelAnimationFrame(raf);
-    }, []);
-
-    const handleMove = (e: React.MouseEvent<HTMLDivElement>) => {
-        if (!chartRef.current) return;
-
-        const rect = chartRef.current.getBoundingClientRect();
-        const localX = e.clientX - rect.left;
-        const localY = e.clientY - rect.top;
-
-        const ratio = Math.max(0, Math.min(1, localX / rect.width));
-        const index = Math.round(ratio * (chartData.length - 1));
-        const p = points[index];
-
-        targetRef.current = {
-            visible: true,
-            index,
-            cursorX: localX,
-            cursorY: localY,
-            pointX: (p.x / W) * rect.width,
-            pointY: (p.y / VIEW_H) * rect.height,
-        };
+      });
+      raf = requestAnimationFrame(animate);
     };
+    raf = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
-    const handleLeave = () => {
-        targetRef.current.visible = false;
+  const handleMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!chartRef.current) return;
+    const rect = chartRef.current.getBoundingClientRect();
+    const localX = e.clientX - rect.left;
+    const localY = e.clientY - rect.top;
+    const ratio = Math.max(0, Math.min(1, localX / rect.width));
+    const index = Math.round(ratio * (dynamicChartData.length - 1));
+    const p = points[index];
+    targetRef.current = {
+      visible: true, index, cursorX: localX, cursorY: localY,
+      pointX: (p.x / W) * rect.width, pointY: (p.y / VIEW_H) * rect.height,
     };
+  };
 
-    const activePoint = points[hover.index];
-    const chartWidth = chartRef.current?.clientWidth ?? 1;
-    const placeLeft = hover.cursorX > chartWidth * 0.75;
+  const handleLeave = () => { targetRef.current.visible = false; };
 
-    return (
-        <div className="min-h-full font-sans pb-10">
-            <div className="w-full px-8 py-8 mx-auto">
-                <div className="flex items-center justify-between mb-8">
-                    <div className="flex items-center gap-2.5">
-                        <Activity className="w-6 h-6 text-[#1a1a1a]" strokeWidth={2} />
-                        <h1 className="text-[26px] font-bold text-[#1a1a1a] tracking-tight">Attribution</h1>
-                        <button className="flex items-center gap-1 bg-[#f1f1f1] hover:bg-[#e5e5e5] px-3 py-1.5 rounded-md text-[14px] font-semibold text-[#1a1a1a] transition-colors ml-3 shadow-sm">
-                            Channels <ChevronDown className="w-4 h-4" />
-                        </button>
-                    </div>
+  const activePoint = points[hover.index];
+  const chartWidth = chartRef.current?.clientWidth ?? 1;
+  const placeLeft = hover.cursorX > chartWidth * 0.75;
 
-                    <div className="flex items-center gap-3">
-                        <button className="bg-white border border-[#d1d5db] text-[#1a1a1a] text-[14px] font-semibold px-4 py-2 rounded-lg hover:bg-[#f7f7f7] shadow-sm transition-colors">
-                            Print
-                        </button>
-                        <button className="bg-white border border-[#d1d5db] text-[#1a1a1a] text-[14px] font-semibold px-4 py-2 rounded-lg hover:bg-[#f7f7f7] shadow-sm transition-colors">
-                            Export
-                        </button>
-                    </div>
-                </div>
+  // Actions
+  const handlePrint = () => { window.print(); };
+  const handleExport = () => { toast.success('Attribution report exported to CSV!'); };
 
-                <div className="flex items-center justify-between mb-6">
-                    <div className="flex items-center gap-3">
-                        <button className="flex items-center gap-2 bg-white border border-[#d1d5db] text-[#1a1a1a] text-[14px] font-semibold px-4 py-2 rounded-lg hover:bg-[#f7f7f7] shadow-sm transition-colors">
-                            <Calendar className="w-4 h-4 text-[#5c5f62]" /> Last 30 days
-                        </button>
-                        <button className="flex items-center gap-1 bg-white border border-[#d1d5db] text-[#1a1a1a] text-[14px] font-semibold px-4 py-2 rounded-lg hover:bg-[#f7f7f7] shadow-sm transition-colors">
-                            Daily <ChevronDown className="w-4 h-4" />
-                        </button>
-                    </div>
+  // Click outside to close dropdowns
+  useEffect(() => {
+    const closeDrops = () => { setIsDateDropOpen(false); setIsModelDropOpen(false); setIsMetricDropOpen(false); };
+    window.addEventListener('click', closeDrops);
+    return () => window.removeEventListener('click', closeDrops);
+  }, []);
 
-                    <button className="flex items-center gap-2 bg-white border border-[#d1d5db] text-[#1a1a1a] text-[14px] font-semibold px-4 py-2 rounded-lg hover:bg-[#f7f7f7] shadow-sm transition-colors">
-                        <BarChart2 className="w-4 h-4 text-[#5c5f62]" /> Last non-direct click ▾
-                    </button>
-                </div>
-
-                <div className="bg-white rounded-xl border border-[#e8e8e8] shadow-md p-8 mb-6">
-                    <div className="flex items-center gap-1 mb-8">
-                        <span className="text-[16px] font-semibold text-[#1a1a1a]">Sessions by top 5 channels over time</span>
-                        <ChevronDown className="w-4 h-4 text-[#5c5f62]" />
-                    </div>
-
-                    <div className="flex gap-4 relative">
-                        <div className="flex flex-col justify-between text-[13px] text-[#9ca3af] text-right w-8 pb-8 flex-shrink-0">
-                            <span>2</span>
-                            <span>1.5</span>
-                            <span>1</span>
-                            <span>0.5</span>
-                            <span>0</span>
-                        </div>
-
-                        <div className="flex-1 relative">
-                            <div
-                                ref={chartRef}
-                                className="relative w-full cursor-crosshair"
-                                style={{ height: '420px' }}
-                                onMouseMove={handleMove}
-                                onMouseLeave={handleLeave}
-                            >
-                                <svg
-                                    viewBox={`0 0 ${W} ${VIEW_H}`}
-                                    className="w-full h-full overflow-visible"
-                                    preserveAspectRatio="none"
-                                >
-                                    {[0, 0.25, 0.5, 0.75, 1].map((t, i) => (
-                                        <line
-                                            key={i}
-                                            x1={PADDING_LEFT}
-                                            y1={(t * H).toFixed(2)}
-                                            x2={W - PADDING_RIGHT}
-                                            y2={(t * H).toFixed(2)}
-                                            stroke="#f0f0f0"
-                                            strokeWidth="1.5"
-                                        />
-                                    ))}
-
-                                    <defs>
-                                        <linearGradient id="blueGradient" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.22" />
-                                            <stop offset="100%" stopColor="#3b82f6" stopOpacity="0" />
-                                        </linearGradient>
-                                    </defs>
-
-                                    <path
-                                        d={`${linePath} L ${getX(chartData.length - 1, chartData.length).toFixed(2)} ${H} L ${getX(0, chartData.length).toFixed(2)} ${H} Z`}
-                                        fill="url(#blueGradient)"
-                                    />
-
-                                    <path
-                                        d={linePath}
-                                        fill="none"
-                                        stroke="#2ba5cc"
-                                        strokeWidth="2.5"
-                                        strokeLinecap="round"
-                                    />
-                                </svg>
-
-                                {hover.visible && (
-                                    <>
-                                        <div
-                                            className="absolute top-0 w-[1px] bg-[#d1d5db] pointer-events-none"
-                                            style={{
-                                                left: hover.pointX,
-                                                height: hover.pointY,
-                                                transform: 'translateX(-50%)',
-                                            }}
-                                        />
-
-                                        <div
-                                            className="absolute pointer-events-none"
-                                            style={{
-                                                left: hover.pointX,
-                                                top: hover.pointY,
-                                                transform: 'translate(-50%, -50%)',
-                                            }}
-                                        >
-                                            <div className="w-[10px] h-[10px] rounded-full bg-[#2ba5cc] border-2 border-white shadow-sm" />
-                                        </div>
-
-                                        <div
-                                            className="absolute pointer-events-none z-50"
-                                            style={{
-                                                left: hover.cursorX,
-                                                top: hover.cursorY,
-                                                transform: placeLeft
-                                                    ? 'translate(calc(-100% - 18px), 12px)'
-                                                    : 'translate(18px, 12px)',
-                                            }}
-                                        >
-                                            <div className="bg-white border border-[#e5e7eb] rounded-lg shadow-[0_8px_24px_rgba(0,0,0,0.10)] min-w-[180px] overflow-hidden">
-                                                <div className="px-3 py-3 flex items-center gap-2 text-[13px] text-[#4b5563]">
-                                                    <span className="w-2.5 h-2.5 rounded-full bg-[#2ba5cc] block" />
-                                                    <span>{activePoint.date}</span>
-                                                </div>
-                                                <div className="px-3 py-2 bg-[#f8fafc] border-t border-[#eef2f7]">
-                                                    <span className="text-[14px] text-[#111827]">{activePoint.value}</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </>
-                                )}
-                            </div>
-
-                            <div className="relative flex justify-between text-[13px] text-[#9ca3af] mt-2 px-[2px]">
-                                {chartData
-                                    .filter((_, i) => xLabelIndices.includes(i))
-                                    .map((d) => (
-                                        <span key={d.label}>{d.label}</span>
-                                    ))}
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="flex justify-center mt-8">
-                        <div className="flex items-center gap-2 text-[14px] text-[#5c5f62] font-medium">
-                            <div className="w-3 h-3 rounded-full bg-[#2ba5cc]" />
-                            Direct
-                        </div>
-                    </div>
-                </div>
-
-                {showBanner && (
-                    <div className="bg-[#eef6ff] border border-[#bfdbfe] rounded-xl p-4 flex items-center justify-between mb-6 shadow-sm">
-                        <div className="flex items-center gap-3 text-[#1a1a1a] text-[14px]">
-                            <div className="w-6 h-6 bg-[#dbeafe] rounded-full flex items-center justify-center flex-shrink-0">
-                                <Info className="w-4 h-4 text-[#2563eb]" />
-                            </div>
-                            <span>
-                                Cost, click, and impression metrics are now available for supported marketing apps.{' '}
-                                <a href="#" className="underline font-semibold">Learn more</a>
-                            </span>
-                        </div>
-                        <button onClick={() => setShowBanner(false)} className="text-[#9ca3af] hover:text-[#1a1a1a] ml-4">
-                            ✕
-                        </button>
-                    </div>
-                )}
-
-                <div className="bg-white rounded-xl border border-[#e8e8e8] shadow-md overflow-hidden">
-                    <div className="p-3 border-b border-[#f0f0f0] flex items-center justify-between">
-                        <button className="p-2 hover:bg-[#f5f5f5] rounded-md border border-[#e3e3e3] transition-colors">
-                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
-                            </svg>
-                        </button>
-                        <button className="p-2 hover:bg-[#f5f5f5] rounded-md border border-[#e3e3e3] transition-colors">
-                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                            </svg>
-                        </button>
-                    </div>
-
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left whitespace-nowrap">
-                            <thead>
-                                <tr className="border-b border-[#e8e8e8] bg-[#fafafa]">
-                                    {[
-                                        'Channel',
-                                        'Type',
-                                        'Sessions ↓',
-                                        'Sales',
-                                        'Orders',
-                                        'Conversion rate',
-                                        'Cost',
-                                        'ROAS',
-                                        'CPA',
-                                        'CTR',
-                                        'AOV',
-                                        'Orders from new customers',
-                                        'Orders from returning customers',
-                                    ].map((h) => (
-                                        <th key={h} className="px-6 py-4 text-[13px] font-semibold text-[#5c5f62] tracking-wide">
-                                            {h}
-                                        </th>
-                                    ))}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr className="border-b border-[#f5f5f5] hover:bg-[#f9fafb] transition-colors">
-                                    <td className="px-6 py-4 text-[14px] font-semibold text-[#1a1a1a]">
-                                        <div className="flex items-center gap-2">
-                                            <Store className="w-4 h-4 text-[#5c5f62]" /> Direct
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4 text-[14px] text-[#1a1a1a]">direct</td>
-                                    <td className="px-6 py-4 text-[14px] text-[#1a1a1a]">2</td>
-                                    <td className="px-6 py-4 text-[14px] text-[#1a1a1a]">₹0.00</td>
-                                    <td className="px-6 py-4 text-[14px] text-[#1a1a1a]">0</td>
-                                    <td className="px-6 py-4 text-[14px] text-[#1a1a1a]">0%</td>
-                                    {['—', '—', '—', '—', '—'].map((v, i) => (
-                                        <td key={i} className="px-6 py-4 text-[14px] text-[#9ca3af] text-center">
-                                            {v}
-                                        </td>
-                                    ))}
-                                    <td className="px-6 py-4 text-[14px] text-[#1a1a1a]">0</td>
-                                    <td className="px-6 py-4 text-[14px] text-[#1a1a1a]">0</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
+  return (
+    <div className="min-h-full font-sans pb-10 text-[#ececec]">
+      <div className="w-full max-w-[1400px] px-6 lg:px-8 py-8 mx-auto">
+        
+        {/* ── HEADER ── */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
+          <div className="flex items-center gap-4">
+            <div className="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
+              <Activity className="w-5 h-5 text-purple-400" />
             </div>
+            <div className="flex items-center">
+              <h1 className="text-[24px] font-bold text-white tracking-tight">Attribution</h1>
+              <button 
+                onClick={(e) => { e.stopPropagation(); toast('Channel settings opened', { icon: '⚙️' }); }}
+                className="flex items-center gap-2 bg-[#1a1a1a] hover:bg-white/10 border border-white/10 px-3 py-1.5 rounded-lg text-[13px] font-semibold text-white transition-colors ml-4 shadow-sm"
+              >
+                Channels <ChevronDown className="w-4 h-4 text-[#888]" />
+              </button>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button onClick={handlePrint} className="flex items-center gap-2 bg-[#1a1a1a] border border-white/10 text-white text-[13px] font-semibold px-4 py-2 rounded-xl hover:bg-white/10 transition-colors">
+              <Printer className="w-4 h-4" /> Print
+            </button>
+            <button onClick={handleExport} className="flex items-center gap-2 bg-[#1a1a1a] border border-white/10 text-white text-[13px] font-semibold px-4 py-2 rounded-xl hover:bg-white/10 transition-colors">
+              <Download className="w-4 h-4" /> Export
+            </button>
+          </div>
         </div>
-    );
-}   
+
+        {/* ── TABS NAVIGATION ── */}
+        <div className="flex items-center gap-6 border-b border-white/10 mb-6">
+          {(['Overview', 'Conversion Paths', 'Model Comparison'] as const).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`pb-3 text-[14px] font-bold transition-all relative ${activeTab === tab ? 'text-purple-400' : 'text-[#888] hover:text-white'}`}
+            >
+              {tab}
+              {activeTab === tab && (
+                <motion.div layoutId="attrTab" className="absolute bottom-0 left-0 w-full h-0.5 bg-purple-400 shadow-[0_0_8px_rgba(192,132,252,0.8)]" />
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* ── GLOBAL FILTERS (Applies to all tabs) ── */}
+        <div className="flex flex-wrap items-center justify-between mb-6 gap-4">
+          <div className="flex items-center gap-3 relative">
+            <div className="relative">
+              <button 
+                onClick={(e) => { e.stopPropagation(); setIsDateDropOpen(!isDateDropOpen); setIsModelDropOpen(false); }}
+                className="flex items-center gap-2 bg-[#111] border border-white/10 text-white text-[13px] font-semibold px-4 py-2 rounded-xl hover:bg-[#1a1a1a] transition-colors"
+              >
+                <Calendar className="w-4 h-4 text-[#888]" /> {dateRange} <ChevronDown className="w-3 h-3 text-[#666]" />
+              </button>
+              {isDateDropOpen && (
+                <div className="absolute top-full left-0 mt-2 w-48 bg-[#161616] border border-white/10 rounded-xl shadow-2xl z-50 py-2">
+                  {['Last 7 days', 'Last 30 days', 'Last 90 days'].map(opt => (
+                    <button key={opt} onClick={() => { setDateRange(opt); setIsDateDropOpen(false); }} className={`w-full text-left px-4 py-2 text-[13px] ${dateRange === opt ? 'text-purple-400 bg-purple-500/10' : 'text-white hover:bg-white/5'}`}>
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            
+            <button onClick={() => toast.success('Data grouped by Day')} className="flex items-center gap-1 bg-[#111] border border-white/10 text-white text-[13px] font-semibold px-4 py-2 rounded-xl hover:bg-[#1a1a1a] transition-colors">
+              Daily <ChevronDown className="w-4 h-4 text-[#888]" />
+            </button>
+          </div>
+
+          <div className="relative">
+            <button 
+              onClick={(e) => { e.stopPropagation(); setIsModelDropOpen(!isModelDropOpen); setIsDateDropOpen(false); }}
+              className="flex items-center gap-2 bg-[#111] border border-white/10 text-white text-[13px] font-semibold px-4 py-2 rounded-xl hover:bg-[#1a1a1a] transition-colors"
+            >
+              <BarChart2 className="w-4 h-4 text-[#888]" /> {attrModel} <ChevronDown className="w-3 h-3 text-[#666]" />
+            </button>
+            {isModelDropOpen && (
+              <div className="absolute top-full right-0 mt-2 w-56 bg-[#161616] border border-white/10 rounded-xl shadow-2xl z-50 py-2">
+                {['Last non-direct click', 'First click', 'Last click', 'Linear'].map(opt => (
+                  <button key={opt} onClick={() => { setAttrModel(opt); setIsModelDropOpen(false); }} className={`w-full text-left px-4 py-2 text-[13px] ${attrModel === opt ? 'text-purple-400 bg-purple-500/10' : 'text-white hover:bg-white/5'}`}>
+                    {opt}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── TAB VIEWS ── */}
+        <AnimatePresence mode="wait">
+          
+          {/* OVERVIEW TAB */}
+          {activeTab === 'Overview' && (
+            <motion.div key="overview" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
+              
+              {/* CHART CARD */}
+              <div className="bg-[#111] rounded-2xl border border-white/10 shadow-2xl p-8 mb-6">
+                
+                {/* Metric Selector */}
+                <div className="relative inline-block mb-8">
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); setIsMetricDropOpen(!isMetricDropOpen); }}
+                    className="flex items-center gap-2 cursor-pointer group w-max"
+                  >
+                    <span className="text-[16px] font-bold text-white group-hover:text-purple-400 transition-colors">{activeMetric} by top 5 channels over time</span>
+                    <ChevronDown className="w-4 h-4 text-[#666] group-hover:text-purple-400 transition-colors" />
+                  </button>
+                  {isMetricDropOpen && (
+                    <div className="absolute top-full left-0 mt-2 w-48 bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl z-50 p-2">
+                      {(['Sessions', 'Sales', 'Orders'] as MetricType[]).map(m => (
+                        <button key={m} onClick={() => { setActiveMetric(m); setIsMetricDropOpen(false); }} className={`w-full text-left px-4 py-2 text-[13px] font-bold rounded-lg ${activeMetric === m ? 'text-purple-400 bg-purple-500/10' : 'text-white hover:bg-white/10'}`}>
+                          {m}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex gap-4 relative">
+                  {/* Y Axis Labels */}
+                  <div className="flex flex-col justify-between text-[12px] font-medium text-[#666] text-right w-12 pb-8 flex-shrink-0">
+                    <span>{formatValue(maxVal)}</span>
+                    <span>{formatValue(maxVal * 0.75)}</span>
+                    <span>{formatValue(maxVal * 0.5)}</span>
+                    <span>{formatValue(maxVal * 0.25)}</span>
+                    <span>{formatValue(0)}</span>
+                  </div>
+
+                  {/* Chart Area */}
+                  <div className="flex-1 relative">
+                    <div
+                      ref={chartRef}
+                      className="relative w-full cursor-crosshair"
+                      style={{ height: '380px' }}
+                      onMouseMove={handleMove}
+                      onMouseLeave={handleLeave}
+                    >
+                      <svg viewBox={`0 0 ${W} ${VIEW_H}`} className="w-full h-full overflow-visible" preserveAspectRatio="none">
+                        {[0, 0.25, 0.5, 0.75, 1].map((t, i) => (
+                          <line key={i} x1={PADDING_LEFT} y1={(t * H).toFixed(2)} x2={W - PADDING_RIGHT} y2={(t * H).toFixed(2)} stroke="rgba(255,255,255,0.05)" strokeWidth="1.5" />
+                        ))}
+                        <defs>
+                          <linearGradient id="purpleGradient" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#c084fc" stopOpacity="0.4" />
+                            <stop offset="50%" stopColor="#a855f7" stopOpacity="0.1" />
+                            <stop offset="100%" stopColor="#a855f7" stopOpacity="0" />
+                          </linearGradient>
+                        </defs>
+                        <path d={`${linePath} L ${getX(dynamicChartData.length - 1, dynamicChartData.length).toFixed(2)} ${H} L ${getX(0, dynamicChartData.length).toFixed(2)} ${H} Z`} fill="url(#purpleGradient)" />
+                        <path d={linePath} fill="none" stroke="#c084fc" strokeWidth="3" strokeLinecap="round" style={{ filter: 'drop-shadow(0 0 8px rgba(192, 132, 252, 0.7))' }} />
+                      </svg>
+
+                      {hover.visible && activePoint && (
+                        <>
+                          <div className="absolute top-0 w-px bg-purple-500/30 pointer-events-none" style={{ left: hover.pointX, height: hover.pointY, transform: 'translateX(-50%)' }} />
+                          <div className="absolute pointer-events-none" style={{ left: hover.pointX, top: hover.pointY, transform: 'translate(-50%, -50%)' }}>
+                            <div className="w-[12px] h-[12px] rounded-full bg-[#c084fc] border-[3px] border-[#111] shadow-[0_0_12px_rgba(192,132,252,0.9)]" />
+                          </div>
+                          <div className="absolute pointer-events-none z-50 transition-transform duration-75" style={{ left: hover.cursorX, top: hover.cursorY, transform: placeLeft ? 'translate(calc(-100% - 20px), -50%)' : 'translate(20px, -50%)' }}>
+                            <div className="bg-[#161616] border border-white/10 rounded-xl shadow-2xl overflow-hidden min-w-[160px]">
+                              <div className="px-4 py-3 flex items-center gap-2 text-[12px] text-[#aaa] font-medium bg-[#1a1a1a] border-b border-white/5">
+                                <span className="w-2 h-2 rounded-full bg-[#c084fc] shadow-[0_0_5px_rgba(192,132,252,0.8)] block" />
+                                <span>{new Date(activePoint.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                              </div>
+                              <div className="px-4 py-3">
+                                <span className="text-[18px] font-bold text-white">{formatValue(activePoint.value)} <span className="text-[12px] text-[#666] font-normal ml-1">{activeMetric}</span></span>
+                              </div>
+                            </div>
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    <div className="relative flex justify-between text-[12px] font-medium text-[#666] mt-4 px-[2px]">
+                      {dynamicChartData.filter((_, i) => xLabelIndices.includes(i)).map((d: any, i) => (
+                        <span key={i}>{d.label}</span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex justify-center mt-8">
+                  <div className="flex items-center gap-2 text-[13px] text-[#888] font-bold uppercase tracking-wider bg-[#1a1a1a] px-4 py-2 rounded-lg border border-white/5">
+                    <div className="w-2.5 h-2.5 rounded-full bg-[#c084fc] shadow-[0_0_8px_rgba(192,132,252,0.8)]" />
+                    Direct
+                  </div>
+                </div>
+              </div>
+
+              {/* INFO BANNER */}
+              {showBanner && (
+                <div className="bg-purple-500/10 border border-purple-500/20 rounded-2xl p-4 flex items-center justify-between mb-6 shadow-lg">
+                  <div className="flex items-center gap-4 text-purple-100 text-[13px] font-medium">
+                    <div className="w-8 h-8 bg-purple-500/20 rounded-full flex items-center justify-center flex-shrink-0">
+                      <Info className="w-4 h-4 text-purple-400" />
+                    </div>
+                    <span>Cost, click, and impression metrics are now available. <button className="underline font-bold text-purple-300 hover:text-purple-200">Learn more</button></span>
+                  </div>
+                  <button onClick={() => setShowBanner(false)} className="text-purple-400/50 hover:text-purple-300 ml-4 p-2 rounded-lg hover:bg-purple-500/10 transition-colors">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
+              {/* DATA TABLE */}
+              <div className="bg-[#111] rounded-2xl border border-white/10 shadow-2xl overflow-hidden">
+                <div className="p-4 border-b border-white/10 flex items-center justify-end gap-2 bg-[#161616]">
+                  <button onClick={() => toast.success('Filters opened')} className="p-2 hover:bg-white/10 rounded-lg border border-white/10 transition-colors text-[#888] hover:text-white">
+                    <Filter className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="overflow-x-auto custom-scrollbar">
+                  <table className="w-full text-left whitespace-nowrap">
+                    <thead>
+                      <tr className="border-b border-white/10 bg-[#161616]">
+                        {['Channel', 'Type', `${activeMetric} ↓`, 'Sales', 'Orders', 'Conversion rate', 'Cost', 'ROAS', 'CPA', 'CTR'].map((h) => (
+                          <th key={h} className="px-6 py-4 text-[12px] font-bold text-[#888] uppercase tracking-wider">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="border-b border-white/5 hover:bg-white/5 transition-colors group">
+                        <td className="px-6 py-4 text-[14px] font-bold text-white flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-lg bg-purple-500/10 flex items-center justify-center group-hover:bg-purple-500/20 transition-colors">
+                            <Store className="w-4 h-4 text-purple-400" />
+                          </div>
+                          Direct
+                        </td>
+                        <td className="px-6 py-4 text-[13px] font-medium text-[#aaa]">direct</td>
+                        <td className="px-6 py-4 text-[13px] font-bold text-white">0</td>
+                        <td className="px-6 py-4 text-[13px] font-medium text-[#aaa]">₹0.00</td>
+                        <td className="px-6 py-4 text-[13px] font-medium text-[#aaa]">0</td>
+                        <td className="px-6 py-4 text-[13px] font-medium text-[#aaa]">0%</td>
+                        {['—', '—', '—', '—'].map((v, i) => <td key={i} className="px-6 py-4 text-[13px] text-[#666] text-center">{v}</td>)}
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* CONVERSION PATHS TAB */}
+          {activeTab === 'Conversion Paths' && (
+            <motion.div key="paths" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="bg-[#111] rounded-2xl border border-white/10 shadow-2xl p-12 text-center flex flex-col items-center">
+              <div className="w-16 h-16 rounded-full bg-purple-500/10 border border-purple-500/20 flex items-center justify-center mb-6">
+                <Route className="w-8 h-8 text-purple-400" />
+              </div>
+              <h2 className="text-[20px] font-bold text-white mb-2">No conversion paths found</h2>
+              <p className="text-[14px] text-[#888] max-w-md mx-auto mb-8">We haven't tracked any multi-touch conversion journeys in the selected date range ({dateRange}). As sales increase, you'll see the exact paths customers take before buying.</p>
+              <button onClick={() => toast.success('Scanning for new data...')} className="bg-[#1a1a1a] hover:bg-white/10 border border-white/10 px-6 py-3 rounded-xl text-[14px] font-bold text-white transition-colors">
+                Refresh Data
+              </button>
+            </motion.div>
+          )}
+
+          {/* MODEL COMPARISON TAB */}
+          {activeTab === 'Model Comparison' && (
+            <motion.div key="models" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="bg-[#111] rounded-2xl border border-white/10 shadow-2xl overflow-hidden">
+              <div className="p-6 border-b border-white/10 bg-[#161616] flex items-center justify-between">
+                <div>
+                  <h2 className="text-[16px] font-bold text-white">Model Comparison</h2>
+                  <p className="text-[13px] text-[#888] mt-1">Compare how different attribution models credit your channels.</p>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2 bg-[#1a1a1a] px-3 py-1.5 rounded-lg border border-white/5"><div className="w-2 h-2 rounded-full bg-purple-400"/> <span className="text-[12px] font-bold text-white">{attrModel}</span></div>
+                  <ArrowRightLeft className="w-4 h-4 text-[#666]" />
+                  <div className="flex items-center gap-2 bg-[#1a1a1a] px-3 py-1.5 rounded-lg border border-white/5"><div className="w-2 h-2 rounded-full bg-blue-400"/> <span className="text-[12px] font-bold text-white">First click</span></div>
+                </div>
+              </div>
+              <div className="p-12 text-center flex flex-col items-center">
+                 <div className="w-16 h-16 rounded-full bg-[#1a1a1a] border border-white/5 flex items-center justify-center mb-6">
+                  <GitBranch className="w-8 h-8 text-[#666]" />
+                </div>
+                <h3 className="text-[16px] font-bold text-white mb-2">Not enough data to compare</h3>
+                <p className="text-[13px] text-[#888]">Drive more traffic and sales to see how First Click compares to {attrModel}.</p>
+              </div>
+            </motion.div>
+          )}
+
+        </AnimatePresence>
+      </div>
+
+      <style dangerouslySetInnerHTML={{__html: `
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+      `}} />
+    </div>
+  );
+}

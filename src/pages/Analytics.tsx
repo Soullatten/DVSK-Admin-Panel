@@ -1,359 +1,506 @@
-import React, { useState, useEffect } from 'react';
-import { BarChart2, Calendar, ChevronDown, RefreshCw, MoreHorizontal, Info, Check } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { BarChart2, Calendar, ChevronDown, RefreshCw, MoreHorizontal, Info, Check, Download, Loader2, ArrowRight, Settings, FileText } from 'lucide-react';
+import { motion, AnimatePresence, useMotionValue, useSpring } from 'framer-motion';
+import toast from 'react-hot-toast';
 
-// --- Currency Configuration ---
+// --- Configuration & Helpers ---
 const CURRENCIES = [
-    { code: 'INR', symbol: '₹', rate: 1, locale: 'en-IN', label: 'Indian Rupee' },
-    { code: 'USD', symbol: '$', rate: 0.012, locale: 'en-US', label: 'US Dollar' },
-    { code: 'EUR', symbol: '€', rate: 0.011, locale: 'de-DE', label: 'Euro' },
-    { code: 'GBP', symbol: '£', rate: 0.0095, locale: 'en-GB', label: 'British Pound' }
+  { code: 'INR', symbol: '₹', rate: 1, locale: 'en-IN', label: 'Indian Rupee' },
+  { code: 'USD', symbol: '$', rate: 0.012, locale: 'en-US', label: 'US Dollar' },
+  { code: 'EUR', symbol: '€', rate: 0.011, locale: 'de-DE', label: 'Euro' },
+  { code: 'GBP', symbol: '£', rate: 0.0095, locale: 'en-GB', label: 'British Pound' }
 ];
 
-const DATE_PRESETS = ['Today', 'Yesterday', 'Last 7 days', 'Last 30 days', 'Apr 17, 2026', 'Apr 16, 2026', 'Apr 15, 2026'];
+const DATE_PRESETS = ['Today', 'Yesterday', 'Last 7 days', 'Last 30 days', 'Apr 17, 2026'];
 
-// --- Helper to format money dynamically ---
-const formatMoney = (amount: number, currency: typeof CURRENCIES[0], compact = false) => {
-    const converted = amount * currency.rate;
-    if (compact) {
-        return new Intl.NumberFormat(currency.locale, {
-            style: 'currency',
-            currency: currency.code,
-            maximumFractionDigits: 0,
-            notation: "compact",
-            compactDisplay: "short"
-        }).format(converted);
-    }
-    return new Intl.NumberFormat(currency.locale, {
-        style: 'currency',
-        currency: currency.code,
-        minimumFractionDigits: 2
-    }).format(converted);
+const formatMoney = (amount: number, currency: typeof CURRENCIES[0]) => {
+  const converted = amount * currency.rate;
+  return new Intl.NumberFormat(currency.locale, { style: 'currency', currency: currency.code, minimumFractionDigits: 2 }).format(converted);
 };
 
 export default function Analytics() {
-    // --- State Management ---
-    const [currency, setCurrency] = useState(CURRENCIES[0]);
-    const [date1, setDate1] = useState('Today');
-    const [date2, setDate2] = useState('Apr 16, 2026');
+  // --- UI States ---
+  const [currency, setCurrency] = useState(CURRENCIES[0]);
+  const [dateRange, setDateRange] = useState('Today');
+  const [compareDate, setCompareDate] = useState('Yesterday');
+  const [activeDropdown, setActiveDropdown] = useState<'date1' | 'date2' | 'currency' | 'moreHeader' | 'moreTable' | null>(null);
+  
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [activeMetric, setActiveMetric] = useState('Gross sales');
+  const [exportState, setExportState] = useState<'idle' | 'loading' | 'success'>('idle');
+  const [reportState, setReportState] = useState<'idle' | 'loading'>('idle');
+  const [showInfo, setShowInfo] = useState(false);
+
+  // --- Dynamic Data Engine (ZERO STATE) ---
+  const statCards = [
+    { label: 'Gross sales', value: 0, change: '0%', type: 'currency' },
+    { label: 'Returning customer rate', value: 0, change: '0%', type: 'percentage' },
+    { label: 'Orders fulfilled', value: 0, change: '0%', type: 'number' },
+    { label: 'Orders', value: 0, change: '0%', type: 'number' },
+  ];
+
+  const salesBreakdown = [
+    { label: 'Gross sales', value: 0 },
+    { label: 'Discounts', value: 0 },
+    { label: 'Returns', value: 0 },
+    { label: 'Net sales', value: 0 },
+    { label: 'Shipping charges', value: 0 },
+    { label: 'Taxes', value: 0 },
+    { label: 'Total sales', value: 0, isTotal: true },
+  ];
+
+  // --- Handlers ---
+  const handleMetricChange = (metricLabel: string) => {
+    if (activeMetric === metricLabel) return;
+    setActiveMetric(metricLabel);
+    setIsRefreshing(true);
+    setTimeout(() => setIsRefreshing(false), 400); // Simulate loading new data
+  };
+
+  const handleFilterChange = (setter: any, val: any) => {
+    setActiveDropdown(null);
+    setIsRefreshing(true);
+    setter(val);
+    setTimeout(() => {
+      setIsRefreshing(false);
+      toast.success('Analytics dashboard updated');
+    }, 600);
+  };
+
+  // --- REAL EXPORT GENERATOR ---
+  const handleExport = () => {
+    setExportState('loading');
     
-    // Dropdown visibility states
-    const [activeDropdown, setActiveDropdown] = useState<'date1' | 'date2' | 'currency' | null>(null);
-    const [isRefreshing, setIsRefreshing] = useState(false);
+    setTimeout(() => {
+      // 1. Generate the formatted text report
+      const reportText = `
+==================================================
+           DVSK ANALYTICS EXPORT REPORT
+==================================================
 
-    // Simulate network request when filters change
-    const handleFilterChange = () => {
-        setActiveDropdown(null);
-        setIsRefreshing(true);
-        setTimeout(() => setIsRefreshing(false), 600);
+REPORT DETAILS
+--------------------------------------------------
+Date Range   : ${dateRange}
+Compared To  : ${compareDate}
+Currency     : ${currency.code} (${currency.symbol})
+Exported On  : ${new Date().toLocaleString()}
+
+KEY METRICS
+--------------------------------------------------
+Gross Sales            : ${formatMoney(0, currency)}
+Returning Cust. Rate   : 0%
+Orders Fulfilled       : 0
+Total Orders           : 0
+
+SALES BREAKDOWN
+--------------------------------------------------
+Gross Sales            : ${formatMoney(0, currency)}
+Discounts              : ${formatMoney(0, currency)}
+Returns                : ${formatMoney(0, currency)}
+Net Sales              : ${formatMoney(0, currency)}
+Shipping Charges       : ${formatMoney(0, currency)}
+Taxes                  : ${formatMoney(0, currency)}
+--------------------------------------------------
+TOTAL SALES            : ${formatMoney(0, currency)}
+
+==================================================
+          Generated by DVSK Admin Portal
+==================================================
+      `.trim();
+
+      // 2. Create a Blob (File) from the text
+      const blob = new Blob([reportText], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+
+      // 3. Create a temporary anchor tag to trigger the download
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `DVSK_Analytics_${dateRange.replace(/ /g, '_')}_Report.txt`;
+      document.body.appendChild(a);
+      a.click(); // Trigger download
+      document.body.removeChild(a); // Cleanup
+      URL.revokeObjectURL(url); // Free up memory
+
+      // 4. Update UI states
+      setExportState('success');
+      toast.success('Report successfully generated and downloaded!', { icon: '📄' });
+      setTimeout(() => setExportState('idle'), 2500);
+    }, 1500); // 1.5s simulated loading for visual polish
+  };
+
+  const handleViewReport = () => {
+    setReportState('loading');
+    setTimeout(() => {
+      setReportState('idle');
+      toast.success('Navigating to detailed reports...', { icon: '📊' });
+    }, 1000);
+  };
+
+  useEffect(() => {
+    const closeDrops = () => setActiveDropdown(null);
+    window.addEventListener('click', closeDrops);
+    return () => window.removeEventListener('click', closeDrops);
+  }, []);
+
+  // --- Dynamic Chart Generator with Fluid Cursor ---
+  const MainChart = () => {
+    const chartRef = useRef<HTMLDivElement>(null);
+    const [activePoint, setActivePoint] = useState<number | null>(null);
+    
+    // Physics-based cursor tracking
+    const mouseX = useMotionValue(0);
+    const mouseY = useMotionValue(0);
+    const smoothX = useSpring(mouseX, { stiffness: 150, damping: 15, mass: 0.8 });
+    const smoothY = useSpring(mouseY, { stiffness: 150, damping: 15, mass: 0.8 });
+
+    const H = 220; const W = 800;
+    
+    // Generate Labels
+    const labels = useMemo(() => {
+      if (dateRange === 'Last 7 days') return ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+      if (dateRange === 'Last 30 days') return ['1st', '5th', '10th', '15th', '20th', '25th', '30th'];
+      return ['12 AM', '3 AM', '6 AM', '9 AM', '12 PM', '3 PM', '6 PM', '9 PM'];
+    }, [dateRange]);
+
+    const currentCard = statCards.find(c => c.label === activeMetric);
+    
+    // Generate data points (Flatline at 0)
+    const dataPoints = useMemo(() => {
+      return labels.map((label, i) => ({
+        label,
+        val: 0, // ALWAYS ZERO in this state
+        x: (i / (labels.length - 1)) * W,
+      }));
+    }, [labels]);
+
+    // Calculate Y-Axis scale based on the metric type
+    const maxVal = currentCard?.type === 'percentage' ? 100 : 10; 
+
+    // Handle mouse movement for physics tooltip
+    const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!chartRef.current) return;
+      const rect = chartRef.current.getBoundingClientRect();
+      
+      // Update physics coordinates
+      mouseX.set(e.clientX - rect.left);
+      mouseY.set(e.clientY - rect.top);
+
+      // Snap nearest SVG point for the glowing dot
+      const svgX = ((e.clientX - rect.left) / rect.width) * W;
+      let closestIdx = 0;
+      let minDiff = Infinity;
+      dataPoints.forEach((dp, i) => {
+        const diff = Math.abs(dp.x - svgX);
+        if (diff < minDiff) { minDiff = diff; closestIdx = i; }
+      });
+      setActivePoint(closestIdx);
     };
 
-    // --- Mock Data (Raw numbers for conversion) ---
-    const statCards = [
-        { label: 'Gross sales', value: 14500.00, change: '+8%', isCurrency: true },
-        { label: 'Returning customer rate', value: '24.5%', change: '-2.1%', isCurrency: false },
-        { label: 'Orders fulfilled', value: '42', change: '+12%', isCurrency: false },
-        { label: 'Orders', value: '45', change: '+10%', isCurrency: false },
-    ];
-
-    const salesBreakdown = [
-        { label: 'Gross sales', value: 14500.00 },
-        { label: 'Discounts', value: -1200.00 },
-        { label: 'Returns', value: 0.00 },
-        { label: 'Net sales', value: 13300.00 },
-        { label: 'Shipping charges', value: 450.00 },
-        { label: 'Return fees', value: 0.00 },
-        { label: 'Taxes', value: 2394.00 },
-        { label: 'Total sales', value: 16144.00, isTotal: true },
-    ];
-
-    // --- Sub-components (defined inside so they can access currency state) ---
-    const MiniSparkline = ({ index }: { index: number }) => {
-        const paths = [
-            "M0 16 L10 14 L20 15 L30 8 L40 10 L50 4 L60 6 L70 2 L80 0",
-            "M0 4 L10 6 L20 4 L30 12 L40 10 L50 16 L60 14 L70 18 L80 20",
-            "M0 18 L15 14 L30 16 L45 8 L60 4 L80 2",
-            "M0 16 L20 12 L40 14 L60 4 L80 0"
-        ];
-        const isDown = index === 1;
-        return (
-            <svg viewBox="0 0 80 20" className="w-20 h-5 overflow-visible">
-                <path d={paths[index]} fill="none" stroke={isDown ? "#ef4444" : "#3b82f6"} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-        );
+    // Format display values
+    const formatValue = (val: number) => {
+      if (currentCard?.type === 'currency') return formatMoney(val, currency);
+      if (currentCard?.type === 'percentage') return `${val}%`;
+      return val.toString();
     };
 
-    const TotalSalesChart = () => {
-        const [hoveredPoint, setHoveredPoint] = useState<number | null>(null);
-        const times = ['12 AM', '3 AM', '6 AM', '9 AM', '12 PM', '3 PM', '6 PM', '9 PM'];
-        const H = 180;
-        const W = 600;
-        
-        const pointsToday = "M30 178 L110 170 L190 150 L270 110 L350 70 L430 40 L510 20 L590 10";
-        const pointsYesterday = "M30 178 L110 175 L190 160 L270 130 L350 100 L430 80 L510 60 L590 50";
-        
-        // Raw numbers for accurate conversion on hover
-        const rawHoverData = [
-            {x: 30, y: 178, val: 0}, {x: 110, y: 170, val: 1200}, {x: 190, y: 150, val: 3400},
-            {x: 270, y: 110, val: 6800}, {x: 350, y: 70, val: 10500}, {x: 430, y: 40, val: 13200},
-            {x: 510, y: 20, val: 15100}, {x: 590, y: 10, val: 16144}
-        ];
-
-        return (
-            <div className="bg-white rounded-xl border border-[#e8e8e8] shadow-sm p-5 col-span-2 hover:shadow-md transition-shadow relative">
-                <div className="flex justify-between items-start">
-                    <div>
-                        <button className="text-[13px] font-semibold text-[#1a1a1a] border-b border-dashed border-[#d1d5db] hover:border-[#1a1a1a] transition-colors pb-0.5 w-fit mb-2 flex items-center gap-1.5 focus:outline-none">
-                            Total sales over time <ChevronDown className="w-3 h-3 text-[#9ca3af]" />
-                        </button>
-                        <div className="text-[22px] font-bold text-[#1a1a1a] mb-4">
-                            {formatMoney(16144.00, currency)}
-                            <span className="text-[14px] font-normal text-[#10b981] ml-2 inline-flex items-center">↑ 12%</span>
-                        </div>
-                    </div>
-                    <button className="p-1.5 text-[#9ca3af] hover:text-[#1a1a1a] hover:bg-[#f5f5f5] rounded-md transition-colors focus:outline-none">
-                        <Info className="w-4 h-4" />
-                    </button>
-                </div>
-
-                <div className="relative" style={{ height: `${H}px` }}>
-                    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full overflow-visible">
-                        {/* Dynamic Y axis labels based on currency */}
-                        {[20000, 10000, 0].map((val, i) => (
-                            <text key={i} x="0" y={i === 0 ? 12 : i === 1 ? H / 2 : H - 4} fontSize="11" fill="#9ca3af" fontWeight="500">
-                                {formatMoney(val, currency, true)}
-                            </text>
-                        ))}
-
-                        {[0, 0.5, 1].map((t, i) => (
-                            <line key={i} x1="45" y1={t * H} x2={W} y2={t * H} stroke="#f0f0f0" strokeWidth="1" />
-                        ))}
-
-                        <path d={pointsYesterday} fill="none" stroke="#93c5fd" strokeWidth="1.5" strokeDasharray="4 3" strokeLinecap="round" strokeLinejoin="round" />
-                        <path d={pointsToday} fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-
-                        {rawHoverData.map((pt, i) => (
-                            <g key={i} onMouseEnter={() => setHoveredPoint(i)} onMouseLeave={() => setHoveredPoint(null)} className="cursor-pointer">
-                                <circle cx={pt.x} cy={pt.y} r="15" fill="transparent" />
-                                <circle cx={pt.x} cy={pt.y} r={hoveredPoint === i ? "4" : "0"} fill="#3b82f6" className="transition-all duration-200" />
-                                {hoveredPoint === i && (
-                                    <line x1={pt.x} y1={0} x2={pt.x} y2={H} stroke="#e5e7eb" strokeWidth="1" strokeDasharray="3 3" />
-                                )}
-                            </g>
-                        ))}
-                    </svg>
-
-                    <div className="flex justify-between text-[11px] font-medium text-[#9ca3af] mt-2 pl-12 pr-1">
-                        {times.map((t) => <span key={t}>{t}</span>)}
-                    </div>
-
-                    {hoveredPoint !== null && (
-                        <div className="absolute bg-[#1a1a1a] text-white px-3 py-2 rounded-lg shadow-lg text-[12px] pointer-events-none transform -translate-x-1/2 -translate-y-[120%] z-10 whitespace-nowrap"
-                            style={{ left: `${(rawHoverData[hoveredPoint].x / W) * 100}%`, top: `${(rawHoverData[hoveredPoint].y / H) * 100}%` }}>
-                            <div className="font-semibold text-[#a1a1aa] mb-1">{times[hoveredPoint]}</div>
-                            <div className="flex justify-between gap-4">
-                                <span className="text-[#3b82f6]">{date1}</span> 
-                                <span>{formatMoney(rawHoverData[hoveredPoint].val, currency, true)}</span>
-                            </div>
-                        </div>
-                    )}
-                </div>
-
-                <div className="flex gap-5 mt-4 pt-4 border-t border-[#f0f0f0]">
-                    <button className="flex items-center gap-2 text-[12px] font-medium text-[#5c5f62] hover:text-[#1a1a1a] transition-colors focus:outline-none">
-                        <div className="w-2.5 h-2.5 rounded-full bg-[#3b82f6]" /> {date1}
-                    </button>
-                    <button className="flex items-center gap-2 text-[12px] font-medium text-[#9ca3af] hover:text-[#5c5f62] transition-colors focus:outline-none">
-                        <div className="w-2.5 h-2.5 rounded-full bg-[#93c5fd]" /> {date2}
-                    </button>
-                </div>
-            </div>
-        );
+    // Build perfect flatline path
+    const buildPath = (points: typeof dataPoints) => {
+      if (!points.length) return '';
+      let path = `M ${points[0].x} ${H}`;
+      for (let i = 0; i < points.length - 1; i++) {
+        const curr = points[i];
+        const next = points[i + 1];
+        const cp1x = curr.x + (next.x - curr.x) / 2;
+        const cp2x = curr.x + (next.x - curr.x) / 2;
+        path += ` C ${cp1x} ${H}, ${cp2x} ${H}, ${next.x} ${H}`;
+      }
+      return path;
     };
+
+    const linePath = buildPath(dataPoints);
+    const areaPath = `${linePath} L ${W} ${H} L 0 ${H} Z`;
 
     return (
-        <div className="min-h-screen bg-[#f6f6f7] font-sans pb-10 selection:bg-blue-100 relative">
-            
-            {/* Click Outside Overlay */}
-            {activeDropdown && (
-                <div className="fixed inset-0 z-40" onClick={() => setActiveDropdown(null)} />
-            )}
-
-            <div className="max-w-7xl mx-auto px-6 py-6">
-
-                {/* Header */}
-                <div className="flex items-center justify-between mb-6">
-                    <div className="flex items-center gap-3">
-                        <div className="bg-white p-1.5 rounded-md border border-[#e8e8e8] shadow-sm">
-                            <BarChart2 className="w-5 h-5 text-[#1a1a1a]" strokeWidth={1.5} />
-                        </div>
-                        <h1 className="text-[22px] font-bold text-[#1a1a1a] tracking-tight">Analytics</h1>
-                        <button onClick={handleFilterChange} className="text-[12px] text-[#5c5f62] hover:text-[#1a1a1a] ml-2 flex items-center gap-1.5 transition-colors focus:outline-none group">
-                            <RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin text-[#3b82f6]' : 'group-hover:rotate-180 transition-transform duration-500'}`} /> 
-                            {isRefreshing ? 'Refreshing...' : 'Last refreshed: Just now'}
-                        </button>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <button className="p-1.5 hover:bg-[#ebebeb] rounded-md transition-colors text-[#5c5f62] focus:outline-none active:scale-95">
-                            <MoreHorizontal className="w-5 h-5" />
-                        </button>
-                        <button className="bg-[#1a1a1a] hover:bg-[#333] active:bg-[#000] active:scale-[0.98] text-white text-[13px] font-semibold px-3 py-1.5 rounded-lg shadow-sm transition-all focus:outline-none">
-                            New exploration
-                        </button>
-                    </div>
-                </div>
-
-                {/* Filters Section */}
-                <div className="flex items-center gap-2 mb-6">
-                    {/* Date 1 Dropdown */}
-                    <div className="relative z-50">
-                        <button onClick={() => setActiveDropdown(activeDropdown === 'date1' ? null : 'date1')} className={`flex items-center gap-1.5 bg-white border ${activeDropdown === 'date1' ? 'border-[#1a1a1a] ring-1 ring-[#1a1a1a]' : 'border-[#d1d5db]'} text-[#1a1a1a] text-[13px] font-semibold px-3 py-1.5 rounded-lg hover:bg-[#f9fafb] active:bg-[#f3f4f6] shadow-sm transition-all focus:outline-none`}>
-                            <Calendar className="w-3.5 h-3.5 text-[#5c5f62]" /> {date1} <ChevronDown className="w-3.5 h-3.5 text-[#5c5f62]" />
-                        </button>
-                        {activeDropdown === 'date1' && (
-                            <div className="absolute top-full mt-1.5 left-0 w-48 bg-white border border-[#e8e8e8] rounded-xl shadow-lg py-1 overflow-hidden animate-in fade-in slide-in-from-top-1">
-                                {DATE_PRESETS.map(d => (
-                                    <button key={d} onClick={() => { setDate1(d); handleFilterChange(); }} className="w-full text-left px-4 py-2 text-[13px] hover:bg-[#f5f5f5] text-[#1a1a1a] flex items-center justify-between">
-                                        {d} {date1 === d && <Check className="w-3.5 h-3.5 text-[#3b82f6]" />}
-                                    </button>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Date 2 Dropdown */}
-                    <div className="relative z-50">
-                        <button onClick={() => setActiveDropdown(activeDropdown === 'date2' ? null : 'date2')} className={`flex items-center gap-1.5 bg-white border ${activeDropdown === 'date2' ? 'border-[#1a1a1a] ring-1 ring-[#1a1a1a]' : 'border-[#d1d5db]'} text-[#1a1a1a] text-[13px] font-semibold px-3 py-1.5 rounded-lg hover:bg-[#f9fafb] active:bg-[#f3f4f6] shadow-sm transition-all focus:outline-none`}>
-                            <Calendar className="w-3.5 h-3.5 text-[#5c5f62]" /> {date2} <ChevronDown className="w-3.5 h-3.5 text-[#5c5f62]" />
-                        </button>
-                        {activeDropdown === 'date2' && (
-                            <div className="absolute top-full mt-1.5 left-0 w-48 bg-white border border-[#e8e8e8] rounded-xl shadow-lg py-1 overflow-hidden animate-in fade-in slide-in-from-top-1">
-                                {DATE_PRESETS.map(d => (
-                                    <button key={d} onClick={() => { setDate2(d); handleFilterChange(); }} className="w-full text-left px-4 py-2 text-[13px] hover:bg-[#f5f5f5] text-[#1a1a1a] flex items-center justify-between">
-                                        {d} {date2 === d && <Check className="w-3.5 h-3.5 text-[#3b82f6]" />}
-                                    </button>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Currency Dropdown */}
-                    <div className="relative z-50">
-                        <button onClick={() => setActiveDropdown(activeDropdown === 'currency' ? null : 'currency')} className={`flex items-center gap-1.5 bg-white border ${activeDropdown === 'currency' ? 'border-[#1a1a1a] ring-1 ring-[#1a1a1a]' : 'border-[#d1d5db]'} text-[#1a1a1a] text-[13px] font-semibold px-3 py-1.5 rounded-lg hover:bg-[#f9fafb] active:bg-[#f3f4f6] shadow-sm transition-all focus:outline-none`}>
-                            <span className="text-[#9ca3af] font-serif italic mr-0.5">{currency.symbol}</span> {currency.code} <ChevronDown className="w-3.5 h-3.5 text-[#5c5f62]" />
-                        </button>
-                        {activeDropdown === 'currency' && (
-                            <div className="absolute top-full mt-1.5 left-0 w-40 bg-white border border-[#e8e8e8] rounded-xl shadow-lg py-1 overflow-hidden animate-in fade-in slide-in-from-top-1">
-                                {CURRENCIES.map(c => (
-                                    <button key={c.code} onClick={() => { setCurrency(c); handleFilterChange(); }} className="w-full text-left px-4 py-2 text-[13px] hover:bg-[#f5f5f5] text-[#1a1a1a] flex items-center justify-between">
-                                        <span className="flex items-center gap-2"><span className="text-[#9ca3af] font-serif italic w-4">{c.symbol}</span> {c.code}</span>
-                                        {currency.code === c.code && <Check className="w-3.5 h-3.5 text-[#3b82f6]" />}
-                                    </button>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                </div>
-
-                {/* Stat Cards */}
-                <div className={`grid grid-cols-4 gap-4 mb-4 transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
-                    {statCards.map((card, i) => (
-                        <button key={card.label} className="text-left bg-white rounded-xl border border-[#e8e8e8] hover:border-[#c9cccf] hover:shadow-md active:scale-[0.99] shadow-sm p-4 transition-all focus:outline-none group">
-                            <div className="text-[12px] text-[#5c5f62] font-medium mb-2 border-b border-dashed border-transparent group-hover:border-[#d1d5db] w-fit pb-0.5 transition-colors">
-                                {card.label}
-                            </div>
-                            <div className="flex items-end justify-between">
-                                <div>
-                                    <span className="text-[20px] font-bold text-[#1a1a1a]">
-                                        {card.isCurrency ? formatMoney(card.value as number, currency) : card.value}
-                                    </span>
-                                    <span className={`text-[13px] ml-1.5 font-medium ${card.change.includes('-') ? 'text-[#ef4444]' : card.change === '—' ? 'text-[#9ca3af]' : 'text-[#10b981]'}`}>
-                                        {card.change !== '—' && (card.change.includes('-') ? '↓ ' : '↑ ')}{card.change}
-                                    </span>
-                                </div>
-                                <MiniSparkline index={i} />
-                            </div>
-                        </button>
-                    ))}
-                </div>
-
-                {/* Main Grid */}
-                <div className={`grid grid-cols-3 gap-4 mb-4 transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
-                    <TotalSalesChart />
-                    
-                    {/* Breakdown Component Inlined for state access */}
-                    <div className="bg-white rounded-xl border border-[#e8e8e8] shadow-sm p-5 row-span-2 flex flex-col hover:shadow-md transition-shadow">
-                        <div className="flex items-center justify-between mb-4">
-                            <button className="text-[13px] font-semibold text-[#1a1a1a] border-b border-dashed border-[#d1d5db] hover:border-[#1a1a1a] pb-0.5 transition-colors focus:outline-none">
-                                Total sales breakdown
-                            </button>
-                            <button className="text-[#9ca3af] hover:text-[#1a1a1a] hover:bg-[#f5f5f5] p-1.5 rounded-md transition-colors focus:outline-none">
-                                <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="8" cy="8" r="6" /><path d="M8 7v4M8 5.5v.5" strokeLinecap="round" /></svg>
-                            </button>
-                        </div>
-                        <div className="space-y-1 flex-1">
-                            {salesBreakdown.map((item) => (
-                                <div key={item.label} className={`flex items-center justify-between p-2 -mx-2 rounded-lg transition-colors ${item.isTotal ? 'mt-4 pt-3 border-t border-[#e8e8e8] hover:bg-transparent' : 'hover:bg-[#f5f5f5] cursor-pointer group'}`}>
-                                    <span className={`text-[13px] ${item.isTotal ? 'font-semibold text-[#1a1a1a]' : 'text-[#2563eb] group-hover:underline'}`}>
-                                        {item.label}
-                                    </span>
-                                    <div className="flex items-center gap-3">
-                                        <span className={`text-[13px] ${item.isTotal ? 'font-bold text-[#1a1a1a]' : 'font-medium text-[#1a1a1a]'}`}>
-                                            {formatMoney(item.value, currency)}
-                                        </span>
-                                        {!item.isTotal && <span className="text-[13px] text-[#d1d5db] group-hover:text-[#9ca3af] transition-colors">—</span>}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                        <button className="w-full mt-4 py-2 border border-[#e8e8e8] rounded-lg text-[13px] font-semibold text-[#1a1a1a] hover:bg-[#f9fafb] hover:border-[#d1d5db] active:bg-[#f3f4f6] transition-all focus:outline-none">
-                            View report
-                        </button>
-                    </div>
-                </div>
-
-                {/* Bottom Row */}
-                <div className={`grid grid-cols-3 gap-4 transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
-                    <div className="bg-white rounded-xl border border-[#e8e8e8] shadow-sm p-5 flex flex-col hover:shadow-md transition-shadow">
-                        <button className="text-[13px] font-semibold text-[#1a1a1a] mb-1 border-b border-dashed border-[#d1d5db] hover:border-[#1a1a1a] pb-0.5 w-fit flex items-center gap-1.5 transition-colors focus:outline-none">
-                            Total sales by sales channel <ChevronDown className="w-3 h-3 text-[#9ca3af]" />
-                        </button>
-                        <div className="flex-1 flex items-center justify-center text-[13px] text-[#9ca3af] min-h-[120px] bg-[#fafafa] rounded-lg mt-3 border border-dashed border-[#e5e7eb]">
-                            No data for this date range
-                        </div>
-                    </div>
-                    
-                    <div className="bg-white rounded-xl border border-[#e8e8e8] shadow-sm p-5 flex flex-col hover:shadow-md transition-shadow">
-                        <div className="flex justify-between items-start mb-2">
-                            <button className="text-[13px] font-semibold text-[#1a1a1a] border-b border-dashed border-[#d1d5db] hover:border-[#1a1a1a] pb-0.5 transition-colors flex items-center gap-1.5 focus:outline-none">
-                                Average order value over time <ChevronDown className="w-3 h-3 text-[#9ca3af]" />
-                            </button>
-                            <button className="text-[#9ca3af] hover:text-[#1a1a1a] transition-colors focus:outline-none"><MoreHorizontal className="w-4 h-4"/></button>
-                        </div>
-                        <div className="text-[22px] font-bold text-[#1a1a1a] mb-3">{formatMoney(384, currency)} <span className="text-[14px] font-normal text-[#10b981] ml-1">↑ 5%</span></div>
-                        <div className="relative flex-1 min-h-[120px]">
-                            <svg viewBox="0 0 400 80" className="w-full h-full overflow-visible">
-                                {[500, 250, 0].map((l, i) => (
-                                    <text key={i} x="0" y={i === 0 ? 10 : i === 1 ? 40 : 70} fontSize="10" fill="#9ca3af" fontWeight="500">{formatMoney(l, currency, true)}</text>
-                                ))}
-                                {[0, 0.5, 1].map((t, i) => (
-                                    <line key={i} x1="38" y1={t * 70 + 4} x2="400" y2={t * 70 + 4} stroke="#f0f0f0" strokeWidth="1" />
-                                ))}
-                                <path d="M38 70 L100 65 L200 40 L300 45 L400 30" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                                <path d="M38 72 L100 70 L200 50 L300 60 L400 40" fill="none" stroke="#93c5fd" strokeWidth="1.5" strokeDasharray="4 3" strokeLinecap="round" strokeLinejoin="round" />
-                            </svg>
-                        </div>
-                    </div>
-                    
-                    <div className="bg-white rounded-xl border border-[#e8e8e8] shadow-sm p-5 flex flex-col hover:shadow-md transition-shadow">
-                        <button className="text-[13px] font-semibold text-[#1a1a1a] mb-1 border-b border-dashed border-[#d1d5db] hover:border-[#1a1a1a] pb-0.5 w-fit flex items-center gap-1.5 transition-colors focus:outline-none">
-                            Total sales by product <ChevronDown className="w-3 h-3 text-[#9ca3af]" />
-                        </button>
-                        <div className="flex-1 flex items-center justify-center text-[13px] text-[#9ca3af] min-h-[120px] bg-[#fafafa] rounded-lg mt-3 border border-dashed border-[#e5e7eb]">
-                            No data for this date range
-                        </div>
-                    </div>
-                </div>
+      <div className="bg-[#111] rounded-2xl border border-white/10 shadow-2xl p-6 col-span-2 hover:border-white/20 transition-all relative overflow-hidden group">
+        <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+        
+        <div className="flex justify-between items-start relative z-10 mb-8">
+          <div>
+            <div className="text-[14px] font-bold text-[#888] pb-0.5 w-fit mb-2 uppercase tracking-wider">
+              {activeMetric} Trend
             </div>
+            <div className="text-[32px] font-bold text-white tracking-tight flex items-center">
+              {formatValue(0)}
+              <span className="text-[13px] font-bold px-2 py-1 rounded-lg ml-4 flex items-center gap-1 text-[#888] bg-white/5 border border-white/10">
+                No data yet
+              </span>
+            </div>
+          </div>
+          
+          <div className="relative z-50">
+            <button onClick={() => setShowInfo(!showInfo)} className="p-2 text-[#666] hover:text-purple-400 hover:bg-purple-500/10 rounded-lg transition-colors">
+              <Info className="w-5 h-5" />
+            </button>
+            <AnimatePresence>
+              {showInfo && (
+                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }}
+                  className="absolute right-0 top-full mt-2 w-64 bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl p-4 z-50">
+                  <h4 className="text-white font-bold text-[13px] mb-1">{activeMetric}</h4>
+                  <p className="text-[#888] text-[12px] leading-relaxed">
+                    This personal graph tracks your {activeMetric.toLowerCase()} over time. A flatline indicates no events occurred in the selected range.
+                  </p>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
+
+        {/* ── INTERACTIVE CHART AREA ── */}
+        <div 
+          ref={chartRef}
+          className="relative z-10 w-full cursor-crosshair" 
+          style={{ height: `${H}px` }}
+          onMouseMove={handleMouseMove}
+          onMouseLeave={() => setActivePoint(null)}
+        >
+          <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full overflow-visible" preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="purpleGlow" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#c084fc" stopOpacity="0.4" />
+                <stop offset="100%" stopColor="#a855f7" stopOpacity="0" />
+              </linearGradient>
+            </defs>
+
+            {/* Y-Axis Labels */}
+            {[maxVal, maxVal/2, 0].map((val, i) => (
+              <text key={i} x="0" y={i === 0 ? 10 : i === 1 ? H / 2 + 5 : H - 5} fontSize="11" fill="#666" fontWeight="600" className="font-mono">
+                {formatValue(val)}
+              </text>
+            ))}
+
+            {/* Grid Lines */}
+            {[0, 0.5, 1].map((t, i) => (
+              <line key={i} x1="40" y1={t * H} x2={W} y2={t * H} stroke="rgba(255,255,255,0.05)" strokeWidth="1.5" strokeDasharray="4 4" />
+            ))}
+
+            <motion.path key={`${activeMetric}-area`} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.5 }} d={areaPath} fill="url(#purpleGlow)" />
+            <motion.path key={`${activeMetric}-line`} initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 1, ease: "easeOut" }} d={linePath} fill="none" stroke="#c084fc" strokeWidth="3.5" strokeLinecap="round" style={{ filter: 'drop-shadow(0 0 10px rgba(192, 132, 252, 0.8))' }} />
+
+            {/* Snap-to-Point Grapic */}
+            {dataPoints.map((pt, i) => (
+              <g key={i}>
+                <circle cx={pt.x} cy={H} r={activePoint === i ? "6" : "0"} fill="#fff" stroke="#c084fc" strokeWidth="3" className="transition-all duration-200 shadow-[0_0_15px_#c084fc]" />
+                {activePoint === i && <line x1={pt.x} y1={0} x2={pt.x} y2={H} stroke="rgba(192,132,252,0.3)" strokeWidth="1.5" strokeDasharray="4 4" />}
+              </g>
+            ))}
+          </svg>
+
+          {/* Fluid Physics Tooltip */}
+          <AnimatePresence>
+            {activePoint !== null && (
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }}
+                className="absolute bg-[#161616] border border-purple-500/30 text-white px-4 py-3 rounded-xl shadow-[0_0_30px_rgba(192,132,252,0.2)] text-[12px] pointer-events-none z-50 whitespace-nowrap min-w-[140px] backdrop-blur-xl"
+                style={{ left: smoothX, top: smoothY, x: '-50%', y: '-130%' }}
+              >
+                <div className="font-bold text-[#888] mb-2 uppercase tracking-wider text-[10px] flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-purple-400 shadow-[0_0_5px_#c084fc]" /> {dataPoints[activePoint].label}
+                </div>
+                <div className="flex justify-between gap-6 items-center">
+                  <span className="font-medium text-[#aaa]">{activeMetric}</span> 
+                  <span className="font-bold text-[15px] text-white">
+                    {formatValue(dataPoints[activePoint].val)}
+                  </span>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <div className="absolute bottom-[-20px] left-[40px] right-0 flex justify-between text-[11px] font-bold text-[#666]">
+            {labels.map((t) => <span key={t}>{t}</span>)}
+          </div>
+        </div>
+      </div>
     );
+  };
+
+  return (
+    <div className="min-h-full bg-[#0a0a0a] font-sans pb-10 text-[#ececec] relative overflow-hidden selection:bg-purple-500/30">
+      
+      <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-purple-600/10 rounded-full blur-[120px] pointer-events-none mix-blend-screen" />
+      <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-blue-600/5 rounded-full blur-[120px] pointer-events-none mix-blend-screen" />
+
+      <div className="w-full max-w-[1400px] px-6 lg:px-8 py-8 mx-auto relative z-10">
+
+        {/* ── HEADER ── */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
+          <div className="flex items-center gap-4">
+            <div className="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
+              <BarChart2 className="w-5 h-5 text-purple-400" />
+            </div>
+            <div className="flex items-center">
+              <h1 className="text-[24px] font-bold text-white tracking-tight">Analytics</h1>
+              <button 
+                onClick={() => { setIsRefreshing(true); setTimeout(() => { setIsRefreshing(false); toast.success('Forced sync complete'); }, 800); }} 
+                className="text-[12px] font-medium text-[#888] hover:text-white ml-4 flex items-center gap-1.5 transition-colors bg-white/5 px-3 py-1.5 rounded-lg hover:bg-white/10 border border-transparent hover:border-white/10"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-purple-400' : ''}`} /> 
+                {isRefreshing ? 'Syncing...' : 'Updated just now'}
+              </button>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <button onClick={(e) => { e.stopPropagation(); setActiveDropdown(activeDropdown === 'moreHeader' ? null : 'moreHeader'); }} className="p-2 hover:bg-white/10 rounded-xl transition-colors text-[#888] focus:text-white">
+                <MoreHorizontal className="w-5 h-5" />
+              </button>
+              <AnimatePresence>
+                {activeDropdown === 'moreHeader' && (
+                  <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }}
+                    className="absolute right-0 top-full mt-2 w-48 bg-[#161616] border border-white/10 rounded-xl shadow-2xl py-2 z-50">
+                    <button onClick={() => toast.success('Dashboard layout saved')} className="w-full text-left px-4 py-2 text-[13px] font-bold text-white hover:bg-white/5 flex items-center gap-2"><Settings className="w-4 h-4 text-[#888]"/> Save View</button>
+                    <button onClick={() => toast.success('Custom report generated')} className="w-full text-left px-4 py-2 text-[13px] font-bold text-white hover:bg-white/5 flex items-center gap-2"><FileText className="w-4 h-4 text-[#888]"/> Custom Report</button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            <motion.button 
+              whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+              onClick={handleExport} disabled={exportState !== 'idle'} 
+              className="bg-purple-600 hover:bg-purple-500 text-white text-[14px] font-bold px-5 py-2.5 rounded-xl shadow-[0_0_15px_rgba(192,132,252,0.3)] transition-all flex items-center gap-2 disabled:opacity-80 disabled:cursor-not-allowed w-[150px] justify-center"
+            >
+              {exportState === 'idle' && <><Download className="w-4 h-4" /> Export</>}
+              {exportState === 'loading' && <><Loader2 className="w-4 h-4 animate-spin" /> Exporting...</>}
+              {exportState === 'success' && <><Check className="w-4 h-4" /> Done!</>}
+            </motion.button>
+          </div>
+        </div>
+
+        {/* ── DYNAMIC FILTERS ── */}
+        <div className="flex flex-wrap items-center gap-3 mb-8">
+          {[
+            { id: 'date1', val: dateRange, set: setDateRange, data: DATE_PRESETS, icon: Calendar },
+            { id: 'date2', val: `Compared to ${compareDate}`, set: setCompareDate, data: DATE_PRESETS, icon: Calendar },
+            { id: 'currency', val: currency.code, set: setCurrency, data: CURRENCIES, icon: null }
+          ].map((filter) => (
+            <div key={filter.id} className="relative z-40">
+              <button onClick={(e) => { e.stopPropagation(); setActiveDropdown(activeDropdown === filter.id ? null : filter.id as any); }} 
+                className={`flex items-center gap-2 bg-[#111] border ${activeDropdown === filter.id ? 'border-purple-500/50 shadow-[0_0_15px_rgba(192,132,252,0.15)]' : 'border-white/10'} text-white text-[13px] font-bold px-4 py-2.5 rounded-xl hover:bg-[#1a1a1a] transition-all`}>
+                {filter.icon && <filter.icon className="w-4 h-4 text-[#888]" />}
+                {filter.id === 'currency' && <span className="text-purple-400 font-serif italic mr-1">{(filter.val as any).symbol || currency.symbol}</span>}
+                {filter.id === 'currency' ? currency.code : filter.val}
+                <ChevronDown className="w-3.5 h-3.5 text-[#666]" />
+              </button>
+              
+              <AnimatePresence>
+                {activeDropdown === filter.id && (
+                  <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }}
+                    className="absolute top-full mt-2 left-0 w-48 bg-[#161616] border border-white/10 rounded-2xl shadow-2xl py-2 z-50">
+                    {filter.data.map((item: any) => {
+                      const isSelected = filter.id === 'currency' ? currency.code === item.code : (filter.id === 'date2' ? compareDate === item : dateRange === item);
+                      return (
+                        <button key={item.code || item} onClick={() => handleFilterChange(filter.set, item)} 
+                          className={`w-full text-left px-4 py-2.5 text-[13px] font-bold flex items-center justify-between transition-colors ${isSelected ? 'text-purple-400 bg-purple-500/10' : 'text-white hover:bg-white/5'}`}>
+                          <span className="flex items-center gap-2">
+                            {filter.id === 'currency' && <span className="text-purple-400 font-serif italic w-4">{item.symbol}</span>}
+                            {item.code || item}
+                          </span>
+                          {isSelected && <Check className="w-4 h-4" />}
+                        </button>
+                      );
+                    })}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          ))}
+        </div>
+
+        {/* ── STAT CARDS ── */}
+        <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 mb-5 transition-opacity duration-300 ${isRefreshing ? 'opacity-40 blur-[2px]' : 'opacity-100 blur-0'}`}>
+          {statCards.map((card) => {
+            const isActive = activeMetric === card.label;
+            return (
+              <button key={card.label} onClick={() => handleMetricChange(card.label)}
+                className={`text-left bg-[#111] rounded-2xl border transition-all duration-300 group relative overflow-hidden p-6
+                  ${isActive ? 'border-purple-500/50 shadow-[0_0_25px_rgba(192,132,252,0.15)] bg-purple-500/5 scale-[1.02]' : 'border-white/10 hover:border-white/20 hover:bg-[#161616]'}
+                `}>
+                <div className="text-[13px] font-bold mb-4 tracking-wide transition-colors relative z-10 flex justify-between uppercase">
+                  <span className={isActive ? 'text-purple-400' : 'text-[#888]'}>{card.label}</span>
+                  {isActive && <motion.div layoutId="activeDot" className="w-2 h-2 rounded-full bg-purple-400 shadow-[0_0_8px_#c084fc]" />}
+                </div>
+                <div className="relative z-10 flex items-end justify-between">
+                  <div>
+                    <span className="text-[28px] font-bold text-white tracking-tight block mb-2">
+                      {card.type === 'currency' ? formatMoney(card.value as number, currency) : card.type === 'percentage' ? `${card.value}%` : card.value}
+                    </span>
+                    <span className={`text-[12px] font-bold px-2 py-1 rounded-md inline-flex items-center gap-1 text-[#888] bg-white/5 border border-white/10`}>
+                      No data yet
+                    </span>
+                  </div>
+                  <svg viewBox="0 0 80 20" className="w-20 h-5 overflow-visible">
+                    <motion.path initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 1.5 }}
+                      d="M0 15 L80 15" fill="none" stroke={isActive ? "#c084fc" : "#444"} strokeWidth="2.5" strokeLinecap="round" 
+                      style={{ filter: isActive ? `drop-shadow(0px 2px 6px rgba(192,132,252,0.6))` : 'none' }}
+                    />
+                  </svg>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* ── MAIN GRID ── */}
+        <div className={`grid grid-cols-1 lg:grid-cols-3 gap-5 mb-5 transition-opacity duration-300 ${isRefreshing ? 'opacity-40 blur-[2px]' : 'opacity-100 blur-0'}`}>
+          
+          <MainChart />
+          
+          {/* Sales Breakdown Panel */}
+          <div className="bg-[#111] rounded-2xl border border-white/10 shadow-2xl p-6 flex flex-col hover:border-white/20 transition-all relative z-10">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-[15px] font-bold text-white tracking-wide uppercase">Sales Breakdown</h3>
+              <div className="relative">
+                <button onClick={(e) => { e.stopPropagation(); setActiveDropdown(activeDropdown === 'moreTable' ? null : 'moreTable'); }} className="p-1.5 text-[#666] hover:text-white rounded-lg hover:bg-white/5 transition-colors">
+                  <MoreHorizontal className="w-5 h-5" />
+                </button>
+                <AnimatePresence>
+                  {activeDropdown === 'moreTable' && (
+                    <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }}
+                      className="absolute right-0 top-full mt-2 w-48 bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl py-2 z-50">
+                      <button onClick={() => toast.success('Columns customized')} className="w-full text-left px-4 py-2 text-[13px] font-bold text-white hover:bg-white/10">Edit columns</button>
+                      <button onClick={() => toast.success('Table exported to CSV')} className="w-full text-left px-4 py-2 text-[13px] font-bold text-white hover:bg-white/10">Export CSV</button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            </div>
+            
+            <div className="space-y-1.5 flex-1 mt-2">
+              {salesBreakdown.map((item) => (
+                <div key={item.label} className={`flex items-center justify-between p-3 -mx-2 rounded-xl transition-all ${item.isTotal ? 'mt-4 pt-4 border-t border-white/10' : 'hover:bg-white/5 cursor-default group'}`}>
+                  <span className={`text-[13px] ${item.isTotal ? 'font-bold text-purple-400 uppercase tracking-wider' : 'text-[#888] group-hover:text-white font-bold'}`}>
+                    {item.label}
+                  </span>
+                  <span className={`font-mono ${item.isTotal ? 'font-bold text-white text-[18px]' : 'font-medium text-[#aaa] group-hover:text-white'}`}>
+                    {formatMoney(item.value, currency)}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            <motion.button 
+              whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+              onClick={handleViewReport} disabled={reportState === 'loading'}
+              className="w-full mt-6 py-3 bg-[#1a1a1a] border border-white/10 rounded-xl text-[14px] font-bold text-[#888] hover:text-white hover:bg-white/10 hover:border-purple-500/30 transition-all flex items-center justify-center gap-2"
+            >
+              {reportState === 'loading' ? <><Loader2 className="w-4 h-4 animate-spin" /> Loading...</> : <>View full report <ArrowRight className="w-4 h-4" /></>}
+            </motion.button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
 }

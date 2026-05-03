@@ -24,11 +24,13 @@ export default function Login() {
       const firebaseToken = await user.getIdToken();
 
       // 3) Save token for ALL admin API calls
-      //    This token will be verified by dvsk-admin-backend's protectAdmin middleware[web:238][web:240]
       setAuthToken(firebaseToken);
+      
+      // Save local auth state so ProtectedRoute works
+      localStorage.setItem("adminAuth", "true");
 
-      toast.success("Logged in");
-      // 4) Go to inventory page protected by /api/products
+      toast.success("Logged in successfully");
+      // 4) Go to main dashboard/inventory
       navigate("/products/inventory");
     } catch (err: any) {
       console.error(err);

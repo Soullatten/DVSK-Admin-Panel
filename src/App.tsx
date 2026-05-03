@@ -1,4 +1,5 @@
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, Outlet } from "react-router-dom";
+import { useState, useEffect } from "react";
 import Layout from "./components/Layout";
 
 import Home from "./pages/Home";
@@ -25,47 +26,55 @@ import Analytics from "./pages/Analytics";
 import Reports from "./pages/Reports";
 import LiveView from "./pages/LiveView";
 import OnlineStore from "./pages/OnlineStore";
-import Login from "./pages/Login"; // 👈 NEW
+import Login from "./pages/Login"; 
 
 import { Toaster } from "react-hot-toast";
+
+// Simple auth provider mock (in a real app, use Context + Firebase/JWT)
+const ProtectedRoute = () => {
+  const isAuthenticated = localStorage.getItem("adminAuth") === "true";
+  return isAuthenticated ? <Outlet /> : <Navigate to="/login" replace />;
+};
 
 export default function App() {
   return (
     <BrowserRouter>
       <Toaster position="top-right" />
       <Routes>
-        {/* Public login page – no layout */}
+        {/* Public login page */}
         <Route path="/login" element={<Login />} />
 
-        {/* All admin pages share the Layout */}
-        <Route element={<Layout />}>
-          <Route path="/" element={<Home />} />
-          <Route path="/orders" element={<Orders />} />
-          <Route path="/orders/drafts" element={<Drafts />} />
-          <Route path="/orders/abandoned" element={<AbandonedCheckouts />} />
-          <Route path="/products" element={<Products />} />
-          <Route path="/products/collections" element={<Collections />} />
-          <Route path="/products/inventory" element={<Inventory />} />
-          <Route path="/products/purchase-orders" element={<PurchaseOrders />} />
-          <Route path="/products/transfers" element={<Transfers />} />
-          <Route path="/products/gift-cards" element={<GiftCards />} />
-          <Route path="/customers" element={<Customers />} />
-          <Route path="/customers/segments" element={<Segments />} />
-          <Route path="/customers/companies" element={<Companies />} />
-          <Route path="/marketing" element={<Marketing />} />
-          <Route path="/marketing/campaigns" element={<Campaigns />} />
-          <Route path="/marketing/automations" element={<Automations />} />
-          <Route path="/marketing/attribution" element={<Attribution />} />
-          <Route path="/discounts" element={<Discounts />} />
-          <Route path="/markets" element={<Markets />} />
-          <Route path="/catalogs" element={<Catalogs />} />
-          <Route path="/analytics" element={<Analytics />} />
-          <Route path="/analytics/reports" element={<Reports />} />
-          <Route path="/analytics/live-view" element={<LiveView />} />
-          <Route path="/online-store" element={<OnlineStore />} />
+        {/* Protected admin pages */}
+        <Route element={<ProtectedRoute />}>
+          <Route element={<Layout />}>
+            <Route path="/" element={<Home />} />
+            <Route path="/orders" element={<Orders />} />
+            <Route path="/orders/drafts" element={<Drafts />} />
+            <Route path="/orders/abandoned" element={<AbandonedCheckouts />} />
+            <Route path="/products" element={<Products />} />
+            <Route path="/products/collections" element={<Collections />} />
+            <Route path="/products/inventory" element={<Inventory />} />
+            <Route path="/products/purchase-orders" element={<PurchaseOrders />} />
+            <Route path="/products/transfers" element={<Transfers />} />
+            <Route path="/products/gift-cards" element={<GiftCards />} />
+            <Route path="/customers" element={<Customers />} />
+            <Route path="/customers/segments" element={<Segments />} />
+            <Route path="/customers/companies" element={<Companies />} />
+            <Route path="/marketing" element={<Marketing />} />
+            <Route path="/marketing/campaigns" element={<Campaigns />} />
+            <Route path="/marketing/automations" element={<Automations />} />
+            <Route path="/marketing/attribution" element={<Attribution />} />
+            <Route path="/discounts" element={<Discounts />} />
+            <Route path="/markets" element={<Markets />} />
+            <Route path="/catalogs" element={<Catalogs />} />
+            <Route path="/analytics" element={<Analytics />} />
+            <Route path="/analytics/reports" element={<Reports />} />
+            <Route path="/analytics/live-view" element={<LiveView />} />
+            <Route path="/online-store" element={<OnlineStore />} />
+          </Route>
         </Route>
 
-        {/* Fallback: send unknown routes to login */}
+        {/* Fallback */}
         <Route path="*" element={<Navigate to="/login" />} />
       </Routes>
     </BrowserRouter>

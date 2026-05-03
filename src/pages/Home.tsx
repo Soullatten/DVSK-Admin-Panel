@@ -1,129 +1,159 @@
-import React from 'react';
-import { Pencil, Lock, Copy, Tag, Sparkles } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Plus, Search, MessageSquare, LayoutPanelLeft, MoreHorizontal, Trash2, Edit3, AlertTriangle } from 'lucide-react';
 import { useOutletContext } from 'react-router-dom';
 import AIChat, { type ChatProps } from '../components/AIChat';
 
+type ChatSession = { id: string; title: string; };
+
+interface ExtendedChatProps extends ChatProps {
+  chatHistory?: ChatSession[];
+  currentChatId?: string | null;
+  loadChat?: (id: string) => void;
+  startNewChat?: () => void;
+  deleteChat?: (id: string) => void;
+  renameChat?: (id: string, newTitle: string) => void;
+  editMessage?: (index: number, newContent: string) => void;
+}
+
 export default function Home() {
-  // Grab the global chat memory from Layout.tsx
-  const chatState = useOutletContext<ChatProps>();
+  const chatState = useOutletContext<ExtendedChatProps>();
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  
+  const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
+  const [chatToDelete, setChatToDelete] = useState<ChatSession | null>(null);
+  const [editingChatId, setEditingChatId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+
+  const previousChats = chatState.chatHistory || [];
+  const filteredChats = previousChats.filter(c => c.title.toLowerCase().includes(searchQuery.toLowerCase()));
+
+  useEffect(() => {
+    const handleClick = () => setActiveDropdown(null);
+    document.addEventListener('click', handleClick);
+    return () => document.removeEventListener('click', handleClick);
+  }, []);
+
+  const handleRenameSave = (id: string) => {
+    if (chatState.renameChat && editTitle.trim()) chatState.renameChat(id, editTitle.trim());
+    setEditingChatId(null);
+  };
 
   return (
-    <div className="max-w-[860px] mx-auto px-8 py-10">
+    // Deep OLED Black Foundation
+    <div className="flex h-[calc(100vh-52px)] w-full bg-[#050505] text-[#ececec] overflow-hidden font-sans selection:bg-[#ffffff20] selection:text-white relative">
+      
+      {/* ── LEFT SIDEBAR (HISTORY) ── */}
+      <AnimatePresence initial={false}>
+        {sidebarOpen && (
+          <motion.div 
+            initial={{ width: 0, opacity: 0 }} animate={{ width: 260, opacity: 1 }} exit={{ width: 0, opacity: 0 }}
+            transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+            className="bg-[#0a0a0a] border-r border-[#ffffff0a] flex flex-col flex-shrink-0 z-20 relative"
+          >
+            <div className="w-[260px] h-full flex flex-col">
+              
+              {/* Top Actions */}
+              <div className="p-3 pb-2 flex gap-2">
+                <button onClick={() => setSidebarOpen(false)} className="p-2 hover:bg-[#ffffff0a] rounded-xl transition-all text-[#666] hover:text-[#ececec]">
+                  <LayoutPanelLeft className="w-[18px] h-[18px]" strokeWidth={1.5} />
+                </button>
+                <button onClick={() => chatState.startNewChat?.()} className="flex-1 flex items-center justify-between bg-[#ffffff05] border border-[#ffffff0a] hover:bg-[#ffffff0a] rounded-xl px-3 py-1.5 text-[13px] font-medium transition-all group">
+                  <span className="flex items-center gap-2 text-[#ececec]"><Plus className="w-4 h-4 text-[#888] group-hover:text-white transition-colors" strokeWidth={1.5} /> New chat</span>
+                  <Edit3 className="w-3.5 h-3.5 text-[#555] group-hover:text-[#888] transition-colors" strokeWidth={1.5} />
+                </button>
+              </div>
 
-      <h1 className="text-[24px] font-bold text-[#1a1a1a] mb-8 tracking-tight">
-        Good morning, let's get started.
-      </h1>
+              {/* Search Box */}
+              <div className="px-3 pb-3 pt-2">
+                <div className="relative group">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-[10px] text-[#555] group-focus-within:text-[#ececec] transition-colors" />
+                  <input 
+                    type="text" placeholder="Search history..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full bg-[#ffffff03] text-[13px] text-[#ececec] placeholder-[#555] rounded-xl pl-9 pr-3 py-2 outline-none focus:ring-1 focus:ring-[#ffffff1a] border border-[#ffffff0a] transition-all"
+                  />
+                </div>
+              </div>
 
-      {/* ✅ Chat now uses the global memory and is completely inline (not floating) */}
-      <div className="mb-8">
-        <AIChat {...chatState} isFloating={false} />
+              {/* Chat List */}
+              <div className="flex-1 overflow-y-auto px-2 pb-4 space-y-[2px] custom-scrollbar">
+                <div className="text-[10px] font-semibold text-[#555] mb-2 px-3 pt-2 tracking-widest uppercase">History</div>
+                
+                {filteredChats.length === 0 ? (
+                  <div className="text-[13px] text-[#555] px-3 py-4">No conversations yet.</div>
+                ) : (
+                  filteredChats.map((chat) => {
+                    const isActive = chatState.currentChatId === chat.id;
+                    const isEditing = editingChatId === chat.id;
+
+                    return (
+                      <div key={chat.id} className="relative">
+                        <button onClick={() => { if (!isEditing) chatState.loadChat?.(chat.id); }} className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl transition-all group ${isActive ? 'bg-[#ffffff0a] text-[#ececec]' : 'hover:bg-[#ffffff05] text-[#888]'}`}>
+                          <div className="flex items-center gap-3 overflow-hidden w-full">
+                            {isEditing ? (
+                              <input autoFocus value={editTitle} onChange={(e) => setEditTitle(e.target.value)} onBlur={() => handleRenameSave(chat.id)} onKeyDown={(e) => { if (e.key === 'Enter') handleRenameSave(chat.id); if (e.key === 'Escape') setEditingChatId(null); }} className="bg-transparent border-b border-[#555] outline-none text-[13px] w-full text-white" onClick={(e) => e.stopPropagation()} />
+                            ) : (
+                              <span className="text-[13px] truncate font-medium pt-[1px]">{chat.title}</span>
+                            )}
+                          </div>
+                          
+                          <div onClick={(e) => { e.stopPropagation(); setActiveDropdown(activeDropdown === chat.id ? null : chat.id); }} className={`p-1 rounded-md hover:bg-[#ffffff10] transition-colors ${isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                            <MoreHorizontal className="w-4 h-4 text-[#888] hover:text-white" />
+                          </div>
+                        </button>
+
+                        <AnimatePresence>
+                          {activeDropdown === chat.id && (
+                            <motion.div initial={{ opacity: 0, scale: 0.95, y: -5 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: -5 }} transition={{ duration: 0.15 }} className="absolute right-2 top-10 w-36 bg-[#111] border border-[#222] rounded-xl shadow-2xl z-50 p-1" onClick={(e) => e.stopPropagation()}>
+                              <button onClick={() => { setEditTitle(chat.title); setEditingChatId(chat.id); setActiveDropdown(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-[#ececec] hover:bg-[#222] rounded-lg transition-colors"><Edit3 className="w-3.5 h-3.5 text-[#888]" /> Rename</button>
+                              <div className="h-[1px] w-full bg-[#ffffff0a] my-1" />
+                              <button onClick={() => { setChatToDelete(chat); setActiveDropdown(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-[#ef4444] hover:bg-[#3f1616] rounded-lg transition-colors"><Trash2 className="w-3.5 h-3.5" /> Delete</button>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── RIGHT MAIN AREA (AIChat Engine) ── */}
+      <div className="flex-1 flex flex-col relative min-w-0 z-10 bg-transparent">
+        {!sidebarOpen && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute top-4 left-4 z-30">
+             <button onClick={() => setSidebarOpen(true)} className="p-2 text-[#888] hover:text-[#ececec] hover:bg-[#ffffff0a] rounded-xl transition-colors bg-[#0a0a0a] border border-[#ffffff0a] shadow-md"><LayoutPanelLeft className="w-5 h-5" strokeWidth={1.5} /></button>
+          </motion.div>
+        )}
+        <AIChat {...chatState} />
       </div>
 
-      {/* Setup Card */}
-      <div className="bg-white rounded-xl shadow-sm border border-[#e8e8e8] p-5">
-        <div className="flex items-center gap-2 mb-5">
-          <h2 className="text-[15px] font-semibold text-[#1a1a1a]">Add store name</h2>
-          <button className="p-1 hover:bg-[#f5f5f5] rounded-md transition-colors">
-            <Pencil className="h-3.5 w-3.5 text-[#8a8a8a]" />
-          </button>
-        </div>
-
-        {/* Top 2 Cards */}
-        <div className="grid grid-cols-2 gap-4 mb-4">
-          <div className="rounded-xl border border-[#efefef] hover:border-[#d4d4d4] hover:shadow-md transition-all cursor-pointer flex flex-col group overflow-hidden">
-            <div className="h-[160px] bg-[#f7f7f7] flex items-center justify-center relative overflow-hidden">
-              <div className="absolute -left-4 top-2 w-24 h-24 bg-[#ffe4cc] rounded-full opacity-60 blur-2xl"></div>
-              <div className="absolute right-0 bottom-0 w-20 h-20 bg-[#ffd6cc] rounded-full opacity-40 blur-2xl"></div>
-              <div className="w-[88px] h-[88px] bg-white rounded-2xl shadow-[0_8px_24px_rgba(0,0,0,0.10)] border border-[#efefef] flex items-center justify-center z-10 group-hover:scale-105 transition-transform duration-300">
-                <Tag className="h-9 w-9 text-[#d4d4d4]" strokeWidth={1.5} />
+      {/* Delete Confirmation Modal */}
+      <AnimatePresence>
+        {chatToDelete && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-[#0a0a0a] border border-[#ffffff10] rounded-3xl shadow-2xl w-full max-w-sm p-8">
+              <div className="flex items-center gap-3 text-[#ef4444] mb-4"><div className="w-10 h-10 rounded-full bg-[#ef4444]/10 flex items-center justify-center"><AlertTriangle className="w-5 h-5" /></div><h3 className="text-lg font-semibold text-[#ececec]">Delete Chat?</h3></div>
+              <p className="text-[#a1a1aa] text-[14px] mb-8">Are you sure you want to delete <strong className="text-white">"{chatToDelete.title}"</strong>?</p>
+              <div className="flex gap-3 justify-end">
+                <button onClick={() => setChatToDelete(null)} className="px-5 py-2.5 rounded-xl text-[13px] font-medium text-[#ececec] hover:bg-[#ffffff0a] transition-colors border border-[#ffffff10]">Cancel</button>
+                <button onClick={() => { if (chatState.deleteChat) chatState.deleteChat(chatToDelete.id); setChatToDelete(null); }} className="px-5 py-2.5 rounded-xl text-[13px] font-medium bg-[#ef4444] text-white hover:bg-[#dc2626] transition-colors">Delete</button>
               </div>
-            </div>
-            <div className="p-4">
-              <h3 className="font-semibold text-[14px] text-[#1a1a1a] mb-1.5">Add your first product</h3>
-              <p className="text-[13px] text-[#6b6b6b] mb-4 leading-relaxed">
-                Start by adding a product and a few key details. Not ready?{' '}
-                <a href="#" className="text-[#2563eb] hover:underline font-medium">Start with a sample product</a>
-              </p>
-              <div className="flex items-center gap-2.5">
-                <button className="bg-[#1a1a1a] text-white text-[12px] font-semibold px-3.5 py-1.5 rounded-lg hover:bg-black transition-all shadow-sm">Add product</button>
-                <button className="text-[13px] font-medium text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors">Import</button>
-              </div>
-            </div>
+            </motion.div>
           </div>
+        )}
+      </AnimatePresence>
 
-          <div className="rounded-xl border border-[#efefef] hover:border-[#d4d4d4] hover:shadow-md transition-all cursor-pointer flex flex-col group overflow-hidden">
-            <div className="h-[160px] bg-[#f7f7f7] flex items-center justify-center relative overflow-hidden">
-              <div className="absolute -right-4 top-2 w-24 h-24 bg-[#cce0ff] rounded-full opacity-60 blur-2xl"></div>
-              <div className="absolute left-0 bottom-0 w-20 h-20 bg-[#d4f0ff] rounded-full opacity-40 blur-2xl"></div>
-              <div className="w-[128px] h-[90px] bg-white rounded-2xl shadow-[0_8px_24px_rgba(0,0,0,0.10)] border border-[#efefef] flex p-3 gap-2 z-10 group-hover:scale-105 transition-transform duration-300">
-                <div className="flex flex-col gap-1.5 w-[28%] pt-1">
-                  <div className="w-full h-2 bg-[#f0f0f0] rounded-full"></div>
-                  <div className="w-[80%] h-2 bg-[#f0f0f0] rounded-full"></div>
-                  <div className="w-[90%] h-2 bg-[#f0f0f0] rounded-full"></div>
-                </div>
-                <div className="flex-1 h-full bg-[#f5f5f5] rounded-lg flex items-center justify-center border border-[#efefef]">
-                  <span className="text-[#b0b0b0] font-bold text-xl">Aa</span>
-                </div>
-              </div>
-            </div>
-            <div className="p-4">
-              <h3 className="font-semibold text-[14px] text-[#1a1a1a] mb-1.5">Customize your online store</h3>
-              <p className="text-[13px] text-[#6b6b6b] mb-4 leading-relaxed">
-                Choose or generate a custom theme, then add your logo, colors, and images.
-              </p>
-              <button className="bg-white border border-[#e3e3e3] text-[#1a1a1a] text-[12px] font-semibold px-3.5 py-1.5 rounded-lg hover:bg-[#f9f9f9] transition-all shadow-sm">Customize theme</button>
-            </div>
-          </div>
-        </div>
-
-        {/* Bottom 3 Cards */}
-        <div className="grid grid-cols-3 gap-4">
-          <div className="rounded-xl border border-[#efefef] hover:border-[#d4d4d4] hover:shadow-md p-4 transition-all cursor-pointer flex flex-col">
-            <h3 className="font-semibold text-[13px] text-[#1a1a1a] mb-3">Set up a payment provider</h3>
-            <div className="flex items-center gap-1.5 mb-5">
-              <div className="h-[26px] px-2 bg-[#003087] rounded-[4px] flex items-center justify-center text-white text-[9px] font-bold italic shadow-sm">PayPal</div>
-              <div className="h-[26px] px-2 bg-white border border-[#e3e3e3] rounded-[4px] flex items-center justify-center text-[#1434CB] text-[10px] font-bold shadow-sm">VISA</div>
-              <div className="h-[26px] w-[38px] bg-white border border-[#e3e3e3] rounded-[4px] flex items-center justify-center shadow-sm">
-                <div className="w-[13px] h-[13px] bg-[#EB001B] rounded-full -mr-1.5 z-10"></div>
-                <div className="w-[13px] h-[13px] bg-[#F79E1B] rounded-full"></div>
-              </div>
-            </div>
-            <button className="mt-auto bg-white border border-[#e3e3e3] text-[#1a1a1a] text-[12px] font-semibold px-3 py-1.5 rounded-lg hover:bg-[#f9f9f9] transition-all shadow-sm w-fit">Activate</button>
-          </div>
-
-          <div className="rounded-xl border border-[#efefef] hover:border-[#d4d4d4] hover:shadow-md p-4 transition-all cursor-pointer flex flex-col">
-            <h3 className="font-semibold text-[13px] text-[#1a1a1a] mb-3">Review your shipping rates</h3>
-            <div className="mb-5 flex items-center">
-              <div className="w-[38px] h-[26px] bg-white border border-[#e3e3e3] rounded-[4px] overflow-hidden flex flex-col shadow-sm">
-                <div className="h-1/3 bg-[#FF9933]"></div>
-                <div className="h-1/3 bg-white flex items-center justify-center">
-                  <div className="w-2 h-2 border border-[#000080] rounded-full"></div>
-                </div>
-                <div className="h-1/3 bg-[#138808]"></div>
-              </div>
-            </div>
-            <button className="mt-auto bg-white border border-[#e3e3e3] text-[#1a1a1a] text-[12px] font-semibold px-3 py-1.5 rounded-lg hover:bg-[#f9f9f9] transition-all shadow-sm w-fit">Review</button>
-          </div>
-
-          <div className="rounded-xl border border-[#efefef] hover:border-[#d4d4d4] hover:shadow-md p-4 transition-all cursor-pointer flex flex-col">
-            <div className="flex items-start justify-between mb-3">
-              <h3 className="font-semibold text-[13px] text-[#1a1a1a]">Customize domain</h3>
-              <span className="bg-[#f5f5f5] border border-[#e3e3e3] text-[#4a4a4a] text-[10px] px-1.5 py-0.5 rounded-md flex items-center gap-1 font-semibold whitespace-nowrap">
-                <Lock className="w-2.5 h-2.5" /> Get $20
-              </span>
-            </div>
-            <div className="bg-[#f9f9f9] border border-[#e8e8e8] rounded-lg px-2.5 py-1.5 text-[11px] text-[#6b6b6b] mb-4 flex items-center justify-between">
-              <span className="truncate font-mono">1quv0n-jd.myshopify.com</span>
-              <Copy className="w-3.5 h-3.5 text-[#9a9a9a] flex-shrink-0 ml-1" />
-            </div>
-            <button className="mt-auto bg-white border border-[#e3e3e3] text-[#1a1a1a] text-[12px] font-semibold px-3 py-1.5 rounded-lg hover:bg-[#f9f9f9] transition-all shadow-sm w-fit">Customize</button>
-          </div>
-        </div>
-      </div>
-
-      <p className="text-center text-[12px] text-[#8a8a8a] flex items-center justify-center gap-1.5 mt-8 pb-10 font-medium">
-        <Sparkles className="w-3 h-3" /> New insights and guides will appear here as we learn more about your store
-      </p>
+      <style dangerouslySetInnerHTML={{__html: `
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: transparent; border-radius: 10px; }
+        *:hover > .custom-scrollbar::-webkit-scrollbar-thumb { background: #333; }
+      `}} />
     </div>
   );
 }

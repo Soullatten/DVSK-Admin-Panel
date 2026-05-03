@@ -3,20 +3,26 @@ import {
   Calendar,
   Search,
   Filter,
+  MoreHorizontal,
+  CheckCircle2,
+  XCircle,
+  ChevronDown,
+  ArrowUpRight,
+  Loader2
 } from "lucide-react";
 import toast from "react-hot-toast";
-import { orderService} from "../api/orderService";
-import type { ApiOrder } from "../api/orderService";
-import type { OrderStatsSummary } from "../api/orderService";
+import { orderService } from "../api/orderService";
+import type { ApiOrder, OrderStatsSummary } from "../api/orderService";
+import { motion } from "framer-motion";
 
 // Helper to convert numbers to formatted ₹ string
 const formatMoney = (val: string | number) => {
   const num = Number(val || 0);
-  return isNaN(num) ? "₹0.00" : `₹${num.toFixed(2)}`;
+  return isNaN(num) ? "₹0.00" : `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
 interface MappedOrder {
-  id: string; // backend id
+  id: string;
   orderNumber: string;
   date: string;
   customer: string;
@@ -28,35 +34,79 @@ interface MappedOrder {
 
 type TimeFilter = "Today" | "Last 7 days" | "Last 30 days";
 
-// Dynamic Sparkline component that scales to actual data
-const Sparkline = ({ data, color }: { data: number[]; color: string }) => {
-  if (!data || data.length === 0) {
-    return <div className="mt-2 text-[10px] text-[#a0a0a0]">No data</div>;
-  }
+// ── Ultra-Smooth, Logic-Perfect Sparkline Component ──
+const Sparkline = ({ data, color, gradientId }: { data: number[]; color: string; gradientId: string }) => {
+  const isZero = !data || data.length === 0 || data.every(v => v === 0);
   
-  const max = Math.max(...data);
-  const min = Math.min(...data);
-  const range = max - min || 1;
-  const height = 24;
-  const width = 80;
+  // Explicitly typed as number[] 
+  const safeData: number[] = isZero ? [0, 0, 0] : data;
+  
+  const height = 44;
+  const width = 160;
 
-  const points = data
-    .map((d, i) => {
-      const x = (i / Math.max(1, data.length - 1)) * width;
-      const y = height - ((d - min) / range) * height;
-      return `${x},${y}`;
-    })
-    .join(" ");
+  const max = Math.max(...safeData);
+  const min = Math.min(...safeData);
+  const range = max === min ? 10 : max - min; 
+
+  // Explicitly type the points array to prevent 'never' inference on {x,y}
+  let pointsArray: Array<{ x: number; y: number }> = safeData.map((d, i) => {
+    const x = safeData.length === 1 ? (i === 0 ? 0 : width) : (i / (safeData.length - 1)) * width;
+    const y = height - ((d - min) / range) * (height - 8) - 4;
+    return { x, y };
+  });
+
+  if (safeData.length === 1) {
+    pointsArray.push({ x: width, y: pointsArray[0].y });
+  }
+
+  const controlPoint = (current: { x: number, y: number } | undefined, previous: { x: number, y: number } | undefined, next: { x: number, y: number } | undefined, reverse?: boolean) => {
+    const p = previous || current;
+    const n = next || current;
+    if (!p || !n || !current) return [current?.x || 0, current?.y || 0];
+    const smoothing = isZero ? 0 : 0.2; 
+    const angle = Math.atan2(n.y - p.y, n.x - p.x) + (reverse ? Math.PI : 0);
+    const length = Math.sqrt(Math.pow(n.x - p.x, 2) + Math.pow(n.y - p.y, 2)) * smoothing;
+    return [current.x + Math.cos(angle) * length, current.y + Math.sin(angle) * length];
+  };
+
+  const bezierCommand = (point: { x: number, y: number }, i: number, a: { x: number, y: number }[]) => {
+    const [cpsX, cpsY] = controlPoint(a[i - 1], a[i - 2], point);
+    const [cpeX, cpeY] = controlPoint(point, a[i - 1], a[i + 1], true);
+    return `C ${cpsX},${cpsY} ${cpeX},${cpeY} ${point.x},${point.y}`;
+  };
+
+  const pathD = pointsArray.reduce((acc, point, i, a) => 
+    i === 0 ? `M ${point.x},${point.y}` : `${acc} ${bezierCommand(point, i, a)}`
+  , "");
+
+  const fillPathD = `${pathD} L ${width},${height} L 0,${height} Z`;
 
   return (
-    <svg width={width} height={height} className="overflow-visible mt-2">
-      <polyline
-        points={points}
+    <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="overflow-visible mt-4">
+      <defs>
+        <linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity={isZero ? "0.1" : "0.4"} />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      
+      <motion.path 
+        initial={{ d: fillPathD }}
+        animate={{ d: fillPathD }}
+        transition={{ type: "spring", stiffness: 50, damping: 15 }}
+        fill={`url(#${gradientId})`} 
+      />
+      
+      <motion.path
+        initial={{ d: pathD }}
+        animate={{ d: pathD }}
+        transition={{ type: "spring", stiffness: 50, damping: 15 }}
         fill="none"
         stroke={color}
-        strokeWidth="2"
+        strokeWidth="2.5"
         strokeLinecap="round"
         strokeLinejoin="round"
+        opacity={isZero ? 0.3 : 1} 
       />
     </svg>
   );
@@ -67,15 +117,11 @@ export default function Order() {
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
 
-  // Stats State
   const [statsSummary, setStatsSummary] = useState<OrderStatsSummary | null>(null);
-  
-  // Date Dropdown State
   const [isDateDropdownOpen, setIsDateDropdownOpen] = useState(false);
   const [selectedDateFilter, setSelectedDateFilter] = useState<TimeFilter>("Last 30 days");
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Load real orders from backend
   const fetchOrders = async () => {
     setLoading(true);
     try {
@@ -85,19 +131,10 @@ export default function Order() {
         const paymentStatus = o.Payment?.status || "PENDING";
         let payment: MappedOrder["payment"];
         switch (paymentStatus) {
-          case "SUCCESS":
-          case "CAPTURED":
-            payment = "Paid";
-            break;
-          case "FAILED":
-            payment = "Declined";
-            break;
-          case "REFUNDED":
-            payment = "Refunded";
-            break;
-          case "PENDING":
-          default:
-            payment = "Pending";
+          case "SUCCESS": case "CAPTURED": payment = "Paid"; break;
+          case "FAILED": payment = "Declined"; break;
+          case "REFUNDED": payment = "Refunded"; break;
+          default: payment = "Pending";
         }
 
         const orderStatus = o.status || "PENDING";
@@ -112,8 +149,8 @@ export default function Order() {
 
         return {
           id: o.id,
-          orderNumber: o.orderNumber ? `#${o.orderNumber}` : `#${o.id.slice(0, 6)}`,
-          date: new Date(o.createdAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }),
+          orderNumber: o.orderNumber ? `#${o.orderNumber}` : `#${o.id.slice(0, 6).toUpperCase()}`,
+          date: new Date(o.createdAt).toLocaleString("en-IN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }),
           customer: o.User?.name || o.User?.email || "Guest Customer",
           total: formatMoney(o.total),
           payment,
@@ -121,17 +158,14 @@ export default function Order() {
           items: o.items?.length || 0,
         };
       });
-
       setOrders(mapped);
     } catch (error) {
-      console.error(error);
       toast.error("Failed to load orders");
     } finally {
       setLoading(false);
     }
   };
 
-  // Load dynamic stats from backend
   const fetchStats = async () => {
     try {
       const stats = await orderService.stats();
@@ -168,10 +202,8 @@ export default function Order() {
             : order
         )
       );
-
-      toast.success(action === "accept" ? "Order accepted" : "Order declined");
+      toast.success(action === "accept" ? "Order verified" : "Order declined");
     } catch (error) {
-      console.error(error);
       toast.error("Failed to update order");
     }
   };
@@ -186,187 +218,213 @@ export default function Order() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Compute graph data arrays from real stats
-  const dailyCounts = statsSummary?.daily.map(d => d.count) || [];
-  const dailyRevenue = statsSummary?.daily.map(d => d.revenue) || [];
+  // THE FIX IS HERE: `([] as number[])` tells TypeScript this is definitely a number array.
+  const dailyCounts = statsSummary?.daily.map(d => d.count) || ([] as number[]);
+  const dailyRevenue = statsSummary?.daily.map(d => d.revenue) || ([] as number[]);
 
   return (
-    <div
-      className="min-h-full"
-      style={{
-        fontFamily:
-          '-apple-system, BlinkMacSystemFont, "San Francisco", "Segoe UI", Roboto, sans-serif',
-      }}
-    >
-      <div className="max-w-[1100px] mx-auto px-6 py-6">
-        {/* Page Header */}
-        <div className="flex items-center justify-between mb-5">
-          <div className="flex items-center gap-2.5">
-            <svg viewBox="0 0 20 20" fill="none" className="w-5 h-5 text-[#1a1a1a]">
-              <rect x="3" y="3" width="14" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" />
-              <path d="M3 8h14" stroke="currentColor" strokeWidth="1.5" />
-              <path d="M7 12h2M11 12h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-            <h1 className="text-[22px] font-bold text-[#1a1a1a] tracking-tight">Orders</h1>
-          </div>
+    <div className="min-h-full p-6 lg:p-8 max-w-[1200px] mx-auto text-[#ececec]">
+      
+      {/* ── HEADER ── */}
+      <div className="flex items-center justify-between mb-8">
+        <div>
+          <h1 className="text-[24px] font-bold text-white tracking-tight">Orders</h1>
+          <p className="text-[14px] text-[#888] mt-1">Manage and track your recent sales.</p>
+        </div>
+        <button className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-xl text-[14px] font-medium transition-colors shadow-[0_0_15px_rgba(168,85,247,0.25)] flex items-center gap-2">
+          Export CSV <ArrowUpRight className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* ── PREMIUM STATS BAR ── */}
+      <div className="bg-[#111111] rounded-2xl border border-white/10 shadow-lg mb-8 flex flex-col md:flex-row overflow-visible">
+        
+        {/* Date Filter Dropdown */}
+        <div className="relative border-b md:border-b-0 md:border-r border-white/10 flex md:w-[180px] shrink-0" ref={dropdownRef}>
+          <button
+            onClick={() => setIsDateDropdownOpen(!isDateDropdownOpen)}
+            className="flex items-center justify-between w-full px-6 py-5 hover:bg-white/5 transition-colors focus:outline-none rounded-t-2xl md:rounded-l-2xl md:rounded-tr-none"
+          >
+            <div className="flex items-center gap-3">
+              <Calendar className="w-4 h-4 text-purple-400" />
+              <span className="text-[14px] font-medium text-[#ececec]">{selectedDateFilter}</span>
+            </div>
+            <ChevronDown className="w-4 h-4 text-[#888]" />
+          </button>
+
+          {isDateDropdownOpen && (
+            <div className="absolute top-[105%] left-4 w-[200px] bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl py-1.5 z-50 overflow-hidden">
+              {(["Today", "Last 7 days", "Last 30 days"] as TimeFilter[]).map((filter) => (
+                <button
+                  key={filter}
+                  onClick={() => { setSelectedDateFilter(filter); setIsDateDropdownOpen(false); }}
+                  className={`w-full text-left px-4 py-2.5 text-[13px] font-medium transition-colors ${selectedDateFilter === filter ? 'bg-purple-500/10 text-purple-400' : 'text-[#ececec] hover:bg-white/5'}`}
+                >
+                  {filter}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
-        {/* Dynamic Stats Bar */}
-        <div className="bg-white rounded-xl border border-[#e8e8e8] shadow-sm mb-6 flex items-stretch overflow-visible">
-          <div className="relative border-r border-[#f0f0f0] flex" ref={dropdownRef}>
-            <button
-              onClick={() => setIsDateDropdownOpen(!isDateDropdownOpen)}
-              className="flex items-center gap-2 px-5 py-3.5 hover:bg-[#f9f9f9] transition-colors h-full min-w-[120px] text-left focus:outline-none"
-            >
-              <Calendar className="w-4 h-4 text-[#6b6b6b]" />
-              <span className="text-[13px] font-semibold text-[#1a1a1a]">{selectedDateFilter}</span>
+        {/* Stat Cards */}
+        <div className="flex flex-1 overflow-x-auto no-scrollbar">
+          <div className="flex min-w-max w-full">
+            
+            <div className="px-6 py-5 border-r border-white/10 flex-1 min-w-[200px] relative group hover:bg-white/[0.02] transition-colors">
+              <div className="text-[13px] font-medium text-[#888] mb-1">Total Orders</div>
+              <div className="text-[28px] font-bold text-white tracking-tight">{statsSummary?.totalOrders || 0}</div>
+              <Sparkline data={dailyCounts} color="#a855f7" gradientId="grad-orders" />
+            </div>
+            
+            <div className="px-6 py-5 border-r border-white/10 flex-1 min-w-[200px] relative group hover:bg-white/[0.02] transition-colors">
+              <div className="text-[13px] font-medium text-[#888] mb-1">Total Revenue</div>
+              <div className="text-[28px] font-bold text-white tracking-tight">{formatMoney(statsSummary?.totalRevenue || 0)}</div>
+              <Sparkline data={dailyRevenue} color="#34d399" gradientId="grad-revenue" />
+            </div>
+            
+            <div className="px-6 py-5 flex-1 min-w-[200px] relative group hover:bg-white/[0.02] transition-colors md:rounded-r-2xl">
+              <div className="text-[13px] font-medium text-[#888] mb-1">Active Days</div>
+              <div className="text-[28px] font-bold text-white tracking-tight">{statsSummary?.daily.length || 0}</div>
+              <Sparkline data={statsSummary?.daily.length ? Array(statsSummary.daily.length).fill(1) : ([] as number[])} color="#60a5fa" gradientId="grad-days" />
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      {/* ── DATA TABLE AREA ── */}
+      <div className="bg-[#111111] rounded-2xl border border-white/10 shadow-lg overflow-hidden">
+        
+        {/* Toolbar */}
+        <div className="flex flex-col sm:flex-row items-center justify-between p-4 border-b border-white/10 gap-4">
+          <div className="flex items-center bg-[#0a0a0a] border border-white/10 rounded-xl px-4 py-2 w-full sm:max-w-[400px] focus-within:border-purple-500/50 focus-within:ring-2 focus-within:ring-purple-500/10 transition-all">
+            <Search className="w-4 h-4 text-[#888] mr-2.5" />
+            <input
+              type="text"
+              placeholder="Search orders, customers, or status..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="bg-transparent border-none outline-none text-[13px] text-white w-full placeholder:text-[#666]"
+            />
+          </div>
+          <div className="flex items-center gap-3 w-full sm:w-auto">
+            <button className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 text-[13px] font-medium text-[#ececec] bg-[#1a1a1a] border border-white/10 rounded-xl hover:bg-white/5 transition-colors">
+              <Filter className="w-4 h-4 text-[#888]" /> Filters
             </button>
-
-            {isDateDropdownOpen && (
-              <div className="absolute top-[105%] left-2 w-[200px] bg-white border border-[#e8e8e8] rounded-xl shadow-lg py-1.5 z-50">
-                {(["Today", "Last 7 days", "Last 30 days"] as TimeFilter[]).map((filter) => (
-                  <button
-                    key={filter}
-                    onClick={() => {
-                      setSelectedDateFilter(filter);
-                      setIsDateDropdownOpen(false);
-                    }}
-                    className="w-full text-left px-4 py-2 text-[13px] hover:bg-[#f9f9f9] text-[#1a1a1a]"
-                  >
-                    {filter}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="flex flex-1 overflow-x-auto no-scrollbar">
-            <div className="flex min-w-max">
-              <div className="px-6 py-4 border-r border-[#f0f0f0] min-w-[180px]">
-                <div className="text-[12px] text-[#6b6b6b] border-b border-dashed border-[#e8e8e8] pb-1 inline-block mb-1">
-                  Orders
-                </div>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-[16px] font-bold text-[#1a1a1a]">{statsSummary?.totalOrders || 0}</span>
-                </div>
-                <Sparkline data={dailyCounts} color="#5C8B82" />
-              </div>
-              <div className="px-6 py-4 border-r border-[#f0f0f0] min-w-[180px]">
-                <div className="text-[12px] text-[#6b6b6b] border-b border-dashed border-[#e8e8e8] pb-1 inline-block mb-1">
-                  Total Revenue
-                </div>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-[16px] font-bold text-[#1a1a1a]">{formatMoney(statsSummary?.totalRevenue || 0)}</span>
-                </div>
-                <Sparkline data={dailyRevenue} color="#5C8B82" />
-              </div>
-              <div className="px-6 py-4 border-r border-[#f0f0f0] min-w-[180px]">
-                <div className="text-[12px] text-[#6b6b6b] border-b border-dashed border-[#e8e8e8] pb-1 inline-block mb-1">
-                  Active Days
-                </div>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-[16px] font-bold text-[#1a1a1a]">{statsSummary?.daily.length || 0}</span>
-                </div>
-                {/* Flat line for constant metric */}
-                <Sparkline data={[1,1,1]} color="#D98A7A" />
-              </div>
-            </div>
           </div>
         </div>
 
-        {/* Orders Table Area */}
-        <div className="bg-white rounded-xl border border-[#e8e8e8] shadow-sm">
-          {/* Toolbar */}
-          <div className="flex items-center justify-between p-2 border-b border-[#e8e8e8]">
-            <div className="flex items-center gap-2 flex-1 max-w-[600px]">
-              <div className="flex items-center bg-[#fdfdfd] border border-[#e8e8e8] rounded-md px-3 py-1.5 flex-1 focus-within:border-[#1a1a1a] transition-colors">
-                <Search className="w-4 h-4 text-[#9b9b9b] mr-2 flex-shrink-0" />
-                <input
-                  type="text"
-                  placeholder="Filter orders"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="bg-transparent border-none outline-none text-[13px] text-[#1a1a1a] w-full placeholder:text-[#9b9b9b]"
-                />
-              </div>
-              <button className="flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium text-[#1a1a1a] bg-white border border-[#e8e8e8] rounded-md hover:bg-[#f9f9f9] transition-colors shadow-sm">
-                <Filter className="w-4 h-4" /> Filter
-              </button>
-            </div>
-          </div>
-
-          {/* Table */}
+        {/* Table */}
+        <div className="overflow-x-auto">
           {loading ? (
-             <div className="py-24 flex justify-center text-[13px] text-[#6b6b6b]">Loading orders...</div>
+             <div className="py-32 flex flex-col items-center justify-center gap-3">
+               <Loader2 className="w-6 h-6 text-purple-500 animate-spin" />
+               <span className="text-[13px] text-[#888] font-medium">Syncing orders...</span>
+             </div>
           ) : filteredOrders.length === 0 ? (
-            <div className="py-24 flex flex-col items-center justify-center text-center">
-              <div className="w-12 h-12 rounded-full bg-[#f9f9f9] flex items-center justify-center mb-3">
-                <Search className="w-5 h-5 text-[#a0a0a0]" />
+            <div className="py-32 flex flex-col items-center justify-center text-center">
+              <div className="w-16 h-16 rounded-full bg-[#1a1a1a] border border-white/10 flex items-center justify-center mb-4">
+                <Search className="w-6 h-6 text-[#666]" />
               </div>
-              <h3 className="text-[14px] font-semibold text-[#1a1a1a] mb-1">No orders found</h3>
-              <p className="text-[13px] text-[#6b6b6b] max-w-[250px]">
-                Try changing your search or filters to find what you're looking for.
-              </p>
+              <h3 className="text-[16px] font-semibold text-white mb-1">No orders found</h3>
+              <p className="text-[14px] text-[#888] max-w-[250px]">Adjust your search or filters to find what you're looking for.</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-[#e8e8e8]">
-                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b6b6b] w-[12%]">Order</th>
-                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b6b6b] w-[18%]">Date</th>
-                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b6b6b] w-[20%]">Customer</th>
-                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b6b6b] text-right w-[15%]">Total</th>
-                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b6b6b] w-[15%]">Payment</th>
-                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b6b6b] w-[15%]">Fulfillment</th>
-                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b6b6b] w-[5%]">Items</th>
+            <table className="w-full text-left border-collapse whitespace-nowrap">
+              <thead>
+                <tr className="bg-[#161616] border-b border-white/10">
+                  <th className="px-6 py-4 text-[12px] font-semibold text-[#888] uppercase tracking-wider">Order</th>
+                  <th className="px-6 py-4 text-[12px] font-semibold text-[#888] uppercase tracking-wider">Date</th>
+                  <th className="px-6 py-4 text-[12px] font-semibold text-[#888] uppercase tracking-wider">Customer</th>
+                  <th className="px-6 py-4 text-[12px] font-semibold text-[#888] uppercase tracking-wider text-right">Total</th>
+                  <th className="px-6 py-4 text-[12px] font-semibold text-[#888] uppercase tracking-wider">Payment</th>
+                  <th className="px-6 py-4 text-[12px] font-semibold text-[#888] uppercase tracking-wider">Fulfillment</th>
+                  <th className="px-6 py-4 text-[12px] font-semibold text-[#888] uppercase tracking-wider w-[50px]"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {filteredOrders.map((order) => (
+                  <tr key={order.id} className="hover:bg-white/[0.03] transition-colors group cursor-pointer">
+                    
+                    <td className="px-6 py-4">
+                      <span className="text-[14px] font-bold text-white hover:text-purple-400 transition-colors">
+                        {order.orderNumber}
+                      </span>
+                      <div className="text-[12px] text-[#888] mt-0.5">{order.items} item{order.items !== 1 ? 's' : ''}</div>
+                    </td>
+                    
+                    <td className="px-6 py-4 text-[14px] text-[#a0a0a0] font-medium">{order.date}</td>
+                    
+                    <td className="px-6 py-4">
+                      <div className="text-[14px] font-medium text-[#ececec]">{order.customer}</div>
+                    </td>
+                    
+                    <td className="px-6 py-4 text-[14px] font-semibold text-white text-right">{order.total}</td>
+                    
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-2">
+                        {order.payment === "Paid" && (
+                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[12px] font-semibold">
+                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]" /> Paid
+                          </div>
+                        )}
+                        {order.payment === "Pending" && (
+                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-[12px] font-semibold">
+                            <div className="w-1.5 h-1.5 rounded-full bg-yellow-400 shadow-[0_0_8px_#facc15]" /> Pending
+                          </div>
+                        )}
+                        {order.payment === "Declined" && (
+                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-red-500/10 border border-red-500/20 text-red-400 text-[12px] font-semibold">
+                            <div className="w-1.5 h-1.5 rounded-full bg-red-400 shadow-[0_0_8px_#f87171]" /> Declined
+                          </div>
+                        )}
+                        {order.payment === "Refunded" && (
+                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-gray-500/10 border border-gray-500/20 text-gray-400 text-[12px] font-semibold">
+                            <div className="w-1.5 h-1.5 rounded-full bg-gray-400" /> Refunded
+                          </div>
+                        )}
+
+                        {/* Hover Actions for Pending Orders */}
+                        {order.payment === "Pending" && (
+                          <div className="opacity-0 group-hover:opacity-100 flex items-center transition-opacity -ml-1">
+                            <button onClick={(e) => { e.stopPropagation(); handlePaymentAction(order.id, "accept"); }} className="p-1 hover:bg-emerald-500/20 text-emerald-400 rounded-md transition-colors">
+                              <CheckCircle2 className="w-4 h-4" />
+                            </button>
+                            <button onClick={(e) => { e.stopPropagation(); handlePaymentAction(order.id, "decline"); }} className="p-1 hover:bg-red-500/20 text-red-400 rounded-md transition-colors ml-0.5">
+                              <XCircle className="w-4 h-4" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </td>
+
+                    <td className="px-6 py-4">
+                      {order.fulfillment === "Fulfilled" ? (
+                        <span className="inline-flex px-2.5 py-1 rounded-md bg-white/5 border border-white/10 text-[#ececec] text-[12px] font-semibold">
+                          Fulfilled
+                        </span>
+                      ) : order.fulfillment === "Unfulfilled" ? (
+                        <span className="inline-flex px-2.5 py-1 rounded-md bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-[12px] font-semibold">
+                          Unfulfilled
+                        </span>
+                      ) : (
+                        <span className="inline-flex px-2.5 py-1 rounded-md bg-red-500/10 border border-red-500/20 text-red-400 text-[12px] font-semibold">
+                          Returned
+                        </span>
+                      )}
+                    </td>
+
+                    <td className="px-6 py-4 text-right">
+                      <button className="p-2 hover:bg-white/10 rounded-lg text-[#888] hover:text-white transition-colors">
+                        <MoreHorizontal className="w-4 h-4" />
+                      </button>
+                    </td>
+
                   </tr>
-                </thead>
-                <tbody>
-                  {filteredOrders.map((order) => (
-                    <tr key={order.id} className="border-b border-[#e8e8e8] hover:bg-[#fcfcfc] transition-colors group cursor-pointer">
-                      <td className="px-5 py-3">
-                        <span className="text-[13px] font-semibold text-[#1a1a1a] hover:underline">
-                          {order.orderNumber}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3 text-[13px] text-[#6b6b6b]">{order.date}</td>
-                      <td className="px-5 py-3 text-[13px] text-[#1a1a1a]">{order.customer}</td>
-                      <td className="px-5 py-3 text-[13px] text-[#1a1a1a] text-right">{order.total}</td>
-                      <td className="px-5 py-3">
-                        <div className="flex items-center gap-1.5">
-                          {order.payment === "Pending" ? (
-                            <div className="flex items-center gap-1">
-                              <span className="inline-flex px-2 py-0.5 rounded text-[11px] font-medium bg-[#fff8e6] text-[#b38a00] border border-[#ffeeba]">
-                                Pending
-                              </span>
-                              <div className="opacity-0 group-hover:opacity-100 flex items-center transition-opacity ml-1">
-                                <button onClick={(e) => { e.stopPropagation(); handlePaymentAction(order.id, "accept"); }} className="p-0.5 hover:bg-green-50 text-green-600 rounded">
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 6L9 17l-5-5"/></svg>
-                                </button>
-                                <button onClick={(e) => { e.stopPropagation(); handlePaymentAction(order.id, "decline"); }} className="p-0.5 hover:bg-red-50 text-red-600 rounded ml-0.5">
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            <span className={`inline-flex px-2 py-0.5 rounded text-[11px] font-medium border ${order.payment === "Paid" ? "bg-[#f4fbf7] text-[#1e7e4c] border-[#d1f0e0]" : "bg-[#fdf3f4] text-[#c93b3b] border-[#fad5d9]"}`}>
-                              {order.payment}
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-5 py-3">
-                        <span className={`inline-flex px-2 py-0.5 rounded text-[11px] font-medium border ${order.fulfillment === "Fulfilled" ? "bg-[#f5f5f5] text-[#4a4a4a] border-[#e0e0e0]" : "bg-[#fff8e6] text-[#b38a00] border-[#ffeeba]"}`}>
-                          {order.fulfillment}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3 text-[13px] text-[#6b6b6b]">{order.items}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                ))}
+              </tbody>
+            </table>
           )}
         </div>
       </div>

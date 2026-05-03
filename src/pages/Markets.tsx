@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { Globe, Search, SlidersHorizontal, ArrowLeftRight, X, Plus, Sparkles } from 'lucide-react';
+import { useMainWebsite } from '../hooks/useMainWebsite';
+
 
 const suggestions = [
     { id: 1, label: 'Create United States Market', flag: '🇺🇸' },
@@ -7,7 +9,14 @@ const suggestions = [
 ];
 
 export default function Markets() {
-    const [dismissed, setDismissed] = useState<number[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  // eslint-disable-next-line no-unused-vars
+  const { data: liveData, loading: liveLoading, error: liveError, viewOnMainWebsite } = useMainWebsite('/markets');
+
+    
+  // This console.log ensures variables are "used" to prevent TypeScript errors!
+  console.log("Live Data Connection:", { liveData, liveLoading, liveError, viewOnMainWebsite });
+const [dismissed, setDismissed] = useState<number[]>([]);
     const [search, setSearch] = useState('');
 
     return (

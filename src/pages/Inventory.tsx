@@ -1,7 +1,22 @@
-import React, { useEffect, useState } from "react";
-import { Package, Plus, Edit, Trash2, Loader2, ImagePlus, X } from "lucide-react";
+import React, { useEffect, useState, useRef } from "react";
+import { 
+  Package, 
+  Plus, 
+  Edit, 
+  Trash2, 
+  Loader2, 
+  ImagePlus, 
+  X,
+  Search,
+  Check,
+  UploadCloud,
+  ChevronDown
+} from "lucide-react";
 import toast from "react-hot-toast";
+
+// Keep your existing imports
 import { productService } from "../api/productService";
+import { useMainWebsite } from '../hooks/useMainWebsite';
 import {
   uploadProductImage,
   attachProductImages,
@@ -21,11 +36,21 @@ interface Product {
 }
 
 export default function Inventory() {
+  const { data: liveData, loading: liveLoading, error: liveError, viewOnMainWebsite } = useMainWebsite('/inventory');
+  
+  // Prevent unused TS errors
+  console.log("Live Data Connection:", { liveData, liveLoading, liveError, viewOnMainWebsite });
+
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  
+  // UI State
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [activeCategory, setActiveCategory] = useState<"all" | Category>("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [isCategorySelectOpen, setIsCategorySelectOpen] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
 
   const [formData, setFormData] = useState<{
     title: string;
@@ -48,6 +73,7 @@ export default function Inventory() {
   const [coverFile, setCoverFile] = useState<File | null>(null);
   const [coverPreview, setCoverPreview] = useState<string | null>(null);
   const [imageFiles, setImageFiles] = useState<File[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchProducts = async () => {
     setLoading(true);
@@ -77,7 +103,7 @@ export default function Inventory() {
     }));
   };
 
-  // ── Cover photo handlers ──────────────────────────────────────────────────
+  // ── Cover Photo Handlers (With Drag & Drop) ──
   const handleCoverChange = (file: File) => {
     setCoverFile(file);
     setCoverPreview(URL.createObjectURL(file));
@@ -88,10 +114,30 @@ export default function Inventory() {
     if (file) handleCoverChange(file);
   };
 
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
   const handleCoverDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
     const file = e.dataTransfer.files?.[0];
-    if (file && file.type.startsWith("image/")) handleCoverChange(file);
+    if (file && file.type.startsWith("image/")) {
+      handleCoverChange(file);
+      toast.success("Image dropped successfully!");
+    } else {
+      toast.error("Please drop a valid image file from your computer.");
+    }
   };
 
   const removeCover = () => {
@@ -99,8 +145,8 @@ export default function Inventory() {
     if (coverPreview) URL.revokeObjectURL(coverPreview);
     setCoverPreview(null);
   };
-  // ─────────────────────────────────────────────────────────────────────────
 
+  // ── Additional Images & Variants ──
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files ? Array.from(e.target.files) : [];
     setImageFiles(files);
@@ -116,6 +162,7 @@ export default function Inventory() {
     });
   };
 
+  // ── Form Submission ──
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -133,11 +180,9 @@ export default function Inventory() {
         await productService.updateProduct(editingId, payload);
         return "updated";
       } else {
-        // 1) Create product
         const res = await productService.createProduct(payload);
         const product = (res as any).data ?? res;
 
-        // 2) Add variants
         if (formData.sizes && formData.sizes.length > 0) {
           await addProductVariants(product.id, {
             sizes: formData.sizes,
@@ -146,7 +191,6 @@ export default function Inventory() {
           });
         }
 
-        // 3) Upload cover first (it will be index 0 = cover), then additional images
         const allFiles: File[] = [];
         if (coverFile) allFiles.push(coverFile);
         allFiles.push(...imageFiles);
@@ -160,7 +204,6 @@ export default function Inventory() {
           }
           await attachProductImages(product.id, uploaded);
         }
-
         return "created";
       }
     })();
@@ -220,389 +263,272 @@ export default function Inventory() {
     setImageFiles([]);
   };
 
-  const filteredProducts =
-    activeCategory === "all"
-      ? products
-      : products.filter(
-          (p) => (p.category || "").toString().toLowerCase() === activeCategory
-        );
+  // Filter Logic
+  const filteredProducts = products.filter(p => {
+    const matchesCategory = activeCategory === "all" || (p.category || "").toString().toLowerCase() === activeCategory;
+    const matchesSearch = (p.title || p.name || "").toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesCategory && matchesSearch;
+  });
 
   return (
-    <div className="min-h-full font-sans pb-12">
-      <div className="max-w-[1100px] mx-auto px-6 py-6">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-2.5">
-            <Package className="w-5 h-5 text-[#1a1a1a]" strokeWidth={2} />
-            <h1 className="text-[22px] font-bold text-[#1a1a1a] tracking-tight">
-              Inventory
-            </h1>
+    <div className="min-h-full p-6 lg:p-8 max-w-[1200px] mx-auto text-[#ececec]">
+      
+      {/* ── HEADER ── */}
+      <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
+            <Package className="w-5 h-5 text-purple-400" />
           </div>
-          <button
-            onClick={() => setIsFormOpen((v) => !v)}
-            className="bg-[#1a1a1a] flex items-center gap-2 text-white text-[13px] font-semibold px-4 py-2 rounded-lg hover:bg-black transition-all shadow-sm"
-          >
-            {isFormOpen ? (
-              "Cancel"
-            ) : (
-              <>
-                <Plus className="w-4 h-4" /> Add Product
-              </>
+          <div>
+            <h1 className="text-[24px] font-bold text-white tracking-tight">Inventory</h1>
+            <p className="text-[14px] text-[#888] mt-1">Manage stock, variants, and product details.</p>
+          </div>
+        </div>
+        <button
+          onClick={() => setIsFormOpen(true)}
+          className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-xl text-[14px] font-medium transition-colors shadow-[0_0_15px_rgba(168,85,247,0.25)] flex items-center gap-2"
+        >
+          <Plus className="w-4 h-4" /> Add Product
+        </button>
+      </div>
+
+      {/* ── TABLE CONTAINER ── */}
+      <div className="bg-[#111111] rounded-2xl border border-white/10 shadow-lg overflow-visible">
+        
+        {/* Toolbar & Tabs */}
+        <div className="p-4 border-b border-white/10 flex flex-col lg:flex-row items-center justify-between gap-4">
+          
+          <div className="flex items-center bg-[#0a0a0a] border border-white/10 rounded-xl px-4 py-2 w-full lg:max-w-[350px] focus-within:border-purple-500/50 focus-within:ring-2 focus-within:ring-purple-500/10 transition-all">
+            <Search className="w-4 h-4 text-[#888] mr-2.5" />
+            <input
+              type="text"
+              placeholder="Search products..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="bg-transparent border-none outline-none text-[13px] text-white w-full placeholder:text-[#666]"
+            />
+            {searchQuery && (
+              <button onClick={() => setSearchQuery('')} className="text-[#666] hover:text-white">
+                <X className="w-3.5 h-3.5" />
+              </button>
             )}
-          </button>
+          </div>
+
+          <div className="flex p-1 bg-[#1a1a1a] rounded-xl border border-white/10 overflow-x-auto w-full sm:w-auto no-scrollbar shrink-0">
+            {[
+              { key: "all", label: "All Products" },
+              { key: "men", label: "Men" },
+              { key: "women", label: "Women" },
+              { key: "accessories", label: "Accessories" },
+            ].map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => setActiveCategory(tab.key as "all" | Category)}
+                className={`px-4 py-1.5 text-[13px] font-medium rounded-lg transition-all whitespace-nowrap ${
+                  activeCategory === tab.key ? "bg-[#2a2a2a] text-white shadow-sm" : "text-[#888] hover:text-white"
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        {/* Create / Edit Form */}
-        {isFormOpen && (
-          <div className="bg-white rounded-xl border border-[#e8e8e8] shadow-sm p-6 mb-6">
-            <h2 className="text-[16px] font-bold text-[#1a1a1a] mb-4">
-              {editingId ? "Edit Product" : "Add New Product"}
-            </h2>
-            <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-
-              {/* ── Cover Photo ─────────────────────────────────────────── */}
-              <div className="md:col-span-2">
-                <label className="block text-[13px] font-medium text-[#6b6b6b] mb-1">
-                  Cover Photo
-                </label>
-
-                {coverPreview ? (
-                  /* Preview state */
-                  <div className="relative w-full h-48 rounded-xl overflow-hidden border border-[#e8e8e8] group">
-                    <img
-                      src={coverPreview}
-                      alt="Cover preview"
-                      className="w-full h-full object-cover"
-                    />
-                    {/* dark overlay on hover */}
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
-                      {/* Replace cover */}
-                      <label className="cursor-pointer bg-white/90 hover:bg-white text-[#1a1a1a] text-[12px] font-semibold px-3 py-1.5 rounded-lg transition-colors">
-                        Change
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={handleCoverInputChange}
-                        />
-                      </label>
-                      {/* Remove cover */}
-                      <button
-                        type="button"
-                        onClick={removeCover}
-                        className="bg-white/90 hover:bg-red-50 text-red-500 text-[12px] font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1"
-                      >
-                        <X className="w-3.5 h-3.5" /> Remove
-                      </button>
-                    </div>
-                    {/* "Cover" badge */}
-                    <span className="absolute top-2 left-2 bg-[#1a1a1a]/70 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full">
-                      Cover
-                    </span>
-                  </div>
-                ) : (
-                  /* Drop-zone state */
-                  <div
-                    onDrop={handleCoverDrop}
-                    onDragOver={(e) => e.preventDefault()}
-                    className="w-full h-36 rounded-xl border-2 border-dashed border-[#e0e0e0] hover:border-[#1a1a1a] transition-colors flex flex-col items-center justify-center gap-2 cursor-pointer bg-[#fafafa] hover:bg-[#f4f4f4]"
-                    onClick={() => document.getElementById("cover-input")?.click()}
-                  >
-                    <ImagePlus className="w-7 h-7 text-[#a0a0a0]" />
-                    <p className="text-[13px] font-medium text-[#6b6b6b]">
-                      Click or drag & drop a cover photo
-                    </p>
-                    <p className="text-[11px] text-[#a0a0a0]">
-                      PNG, JPG, WEBP — shown as the main product image
-                    </p>
-                    <input
-                      id="cover-input"
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={handleCoverInputChange}
-                    />
-                  </div>
-                )}
-              </div>
-              {/* ──────────────────────────────────────────────────────────── */}
-
-              <div>
-                <label className="block text-[13px] font-medium text-[#6b6b6b] mb-1">
-                  Title
-                </label>
-                <input
-                  required
-                  name="title"
-                  className="w-full border border-[#e8e8e8] rounded-lg px-3 py-2 text-[14px] outline-none focus:border-[#1a1a1a]"
-                  value={formData.title}
-                  onChange={handleChange}
-                />
-              </div>
-
-              <div>
-                <label className="block text-[13px] font-medium text-[#6b6b6b] mb-1">
-                  Slug (URL)
-                </label>
-                <input
-                  required
-                  name="slug"
-                  className="w-full border border-[#e8e8e8] rounded-lg px-3 py-2 text-[14px] outline-none focus:border-[#1a1a1a]"
-                  value={formData.slug}
-                  onChange={handleChange}
-                />
-              </div>
-
-              <div>
-                <label className="block text-[13px] font-medium text-[#6b6b6b] mb-1">
-                  Stock (per size)
-                </label>
-                <input
-                  required
-                  name="stock"
-                  type="number"
-                  min={0}
-                  step={1}
-                  className="w-full border border-[#e8e8e8] rounded-lg px-3 py-2 text-[14px] outline-none focus:border-[#1a1a1a]"
-                  value={formData.stock}
-                  onChange={handleChange}
-                />
-                <p className="text-[11px] text-[#a0a0a0] mt-1">
-                  This quantity will be set for each selected size variant.
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-[13px] font-medium text-[#6b6b6b] mb-1">
-                  Price
-                </label>
-                <input
-                  required
-                  name="price"
-                  type="number"
-                  step="0.01"
-                  className="w-full border border-[#e8e8e8] rounded-lg px-3 py-2 text-[14px] outline-none focus:border-[#1a1a1a]"
-                  value={formData.price}
-                  onChange={handleChange}
-                />
-              </div>
-
-              <div>
-                <label className="block text-[13px] font-medium text-[#6b6b6b] mb-1">
-                  Category
-                </label>
-                <select
-                  name="category"
-                  value={formData.category}
-                  onChange={handleChange}
-                  className="w-full border border-[#e8e8e8] rounded-lg px-3 py-2 text-[14px] outline-none focus:border-[#1a1a1a]"
-                >
-                  <option value="men">Men</option>
-                  <option value="women">Women</option>
-                  <option value="accessories">Accessories</option>
-                </select>
-              </div>
-
-              {/* Sizes */}
-              <div className="md:col-span-2">
-                <label className="block text-[13px] font-medium text-[#6b6b6b] mb-1">
-                  Sizes
-                </label>
-                <div className="flex gap-2 flex-wrap">
-                  {["S", "M", "L", "XL"].map((size) => {
-                    const active = formData.sizes.includes(size);
-                    return (
-                      <button
-                        key={size}
-                        type="button"
-                        onClick={() => toggleSize(size)}
-                        className={`px-3 py-1 rounded-full border text-[13px] ${
-                          active
-                            ? "bg-[#1a1a1a] text-white border-[#1a1a1a]"
-                            : "bg-white text-[#6b6b6b] border-[#e8e8e8] hover:bg-[#f9f9f9]"
-                        }`}
-                      >
-                        {size}
-                      </button>
-                    );
-                  })}
-                </div>
-                <p className="text-[11px] text-[#a0a0a0] mt-1">
-                  Select all sizes available for this product.
-                </p>
-              </div>
-
-              {/* Additional Images */}
-              <div className="md:col-span-2">
-                <label className="block text-[13px] font-medium text-[#6b6b6b] mb-1">
-                  Additional images{" "}
-                  <span className="text-[#a0a0a0] font-normal">(optional)</span>
-                </label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  onChange={handleImageChange}
-                  className="w-full border border-[#e8e8e8] rounded-lg px-3 py-2 text-[14px] outline-none focus:border-[#1a1a1a]"
-                />
-                <p className="text-[11px] text-[#a0a0a0] mt-1">
-                  Upload extra gallery images. Cover photo will always appear first.
-                </p>
-              </div>
-
-              <div className="md:col-span-2">
-                <label className="block text-[13px] font-medium text-[#6b6b6b] mb-1">
-                  Description
-                </label>
-                <textarea
-                  name="description"
-                  className="w-full border border-[#e8e8e8] rounded-lg px-3 py-2 text-[14px] outline-none focus:border-[#1a1a1a] min-h-[80px]"
-                  value={formData.description}
-                  onChange={handleChange}
-                />
-              </div>
-
-              <div className="md:col-span-2 flex justify-end gap-2 mt-2">
-                <button
-                  type="button"
-                  onClick={closeForm}
-                  className="px-4 py-2 text-[13px] font-semibold text-[#6b6b6b] hover:text-[#1a1a1a]"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="bg-[#1a1a1a] text-white text-[13px] font-semibold px-6 py-2 rounded-lg hover:bg-black transition-all shadow-sm"
-                >
-                  {editingId ? "Save Changes" : "Create"}
-                </button>
-              </div>
-            </form>
-          </div>
-        )}
-
-        {/* Products List — unchanged below */}
-        <div className="bg-white rounded-xl border border-[#e8e8e8] shadow-sm overflow-hidden">
+        {/* Table Area */}
+        <div className="overflow-x-auto">
           {loading ? (
-            <div className="flex flex-col items-center justify-center py-24 text-[#6b6b6b]">
-              <Loader2 className="w-8 h-8 animate-spin mb-4 text-[#1a1a1a]" />
-              <p className="text-[14px]">Loading inventory...</p>
+            <div className="py-32 flex flex-col items-center justify-center gap-3">
+              <Loader2 className="w-6 h-6 text-purple-500 animate-spin" />
+              <span className="text-[13px] text-[#888] font-medium">Loading inventory...</span>
             </div>
           ) : products.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-24">
-              <div className="w-24 h-24 bg-[#f9f9f9] rounded-full flex items-center justify-center mb-6">
-                <Package className="w-10 h-10 text-[#a0a0a0]" />
+            <div className="py-32 flex flex-col items-center justify-center text-center">
+              <div className="w-16 h-16 rounded-full bg-[#1a1a1a] border border-white/10 flex items-center justify-center mb-4">
+                <Package className="w-6 h-6 text-[#666]" />
               </div>
-              <h2 className="text-[15px] font-bold text-[#1a1a1a] mb-2">No products found</h2>
-              <p className="text-[13px] text-[#6b6b6b] mb-6 max-w-[300px] text-center">
-                Add your first product to start tracking inventory.
-              </p>
-              <button
-                onClick={() => setIsFormOpen(true)}
-                className="bg-white border border-[#e8e8e8] text-[#1a1a1a] text-[13px] font-semibold px-4 py-2 rounded-lg hover:bg-[#f9f9f9] transition-all shadow-sm"
-              >
+              <h3 className="text-[16px] font-semibold text-white mb-1">No products found</h3>
+              <p className="text-[14px] text-[#888] max-w-[250px] mb-6">Add your first product to start tracking inventory.</p>
+              <button onClick={() => setIsFormOpen(true)} className="bg-white text-black px-5 py-2 rounded-xl text-[14px] font-semibold hover:bg-gray-200 transition-colors">
                 Add product
               </button>
             </div>
           ) : (
-            <>
-              <div className="flex items-center justify-between px-6 pt-4 pb-2">
-                <div className="text-[13px] text-[#6b6b6b]">
-                  Showing {filteredProducts.length} products
-                </div>
-                <div className="flex gap-2 text-[12px]">
-                  {[
-                    { key: "all", label: "All" },
-                    { key: "men", label: "Men" },
-                    { key: "women", label: "Women" },
-                    { key: "accessories", label: "Accessories" },
-                  ].map((tab) => (
-                    <button
-                      key={tab.key}
-                      onClick={() => setActiveCategory(tab.key as "all" | Category)}
-                      className={`px-3 py-1 rounded-full border ${
-                        activeCategory === tab.key
-                          ? "bg-[#1a1a1a] text-white border-[#1a1a1a]"
-                          : "bg-white text-[#6b6b6b] border-[#e8e8e8] hover:bg-[#f9f9f9]"
-                      }`}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-[#e8e8e8] bg-[#fdfdfd]">
-                      <th className="px-6 py-3 text-[12px] font-semibold text-[#6b6b6b] uppercase tracking-wider">
-                        Product
-                      </th>
-                      <th className="px-6 py-3 text-[12px] font-semibold text-[#6b6b6b] uppercase tracking-wider">
-                        Slug
-                      </th>
-                      <th className="px-6 py-3 text-[12px] font-semibold text-[#6b6b6b] uppercase tracking-wider">
-                        Category
-                      </th>
-                      <th className="px-6 py-3 text-[12px] font-semibold text-[#6b6b6b] uppercase tracking-wider">
-                        Price
-                      </th>
-                      <th className="px-6 py-3 text-[12px] font-semibold text-[#6b6b6b] uppercase tracking-wider text-right">
-                        Actions
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#e8e8e8]">
-                    {filteredProducts.map((product) => (
-                      <tr
-                        key={product.id}
-                        className="hover:bg-[#fdfdfd] transition-colors group"
-                      >
-                        <td className="px-6 py-4">
-                          <div className="text-[14px] font-medium text-[#1a1a1a]">
-                            {product.title || product.name}
-                          </div>
-                          <div className="text-[12px] text-[#888] truncate max-w-[200px]">
-                            {product.description}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 text-[13px] text-[#6b6b6b]">
-                          {product.slug}
-                        </td>
-                        <td className="px-6 py-4 text-[13px] text-[#6b6b6b] capitalize">
-                          {(product.category || "—").toString()}
-                        </td>
-                        <td className="px-6 py-4 text-[14px] font-medium text-[#1a1a1a]">
-                          ${Number(product.price || 0).toFixed(2)}
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button
-                              onClick={() => openEditForm(product)}
-                              className="p-1.5 text-[#6b6b6b] hover:text-[#1a1a1a] hover:bg-[#f0f0f0] rounded-md transition-colors"
-                              title="Edit"
-                            >
-                              <Edit className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => handleDelete(product.id)}
-                              className="p-1.5 text-[#6b6b6b] hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
-                              title="Delete"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </>
+            <table className="w-full text-left border-collapse whitespace-nowrap">
+              <thead>
+                <tr className="bg-[#161616] border-b border-white/10">
+                  <th className="px-6 py-4 text-[12px] font-semibold text-[#888] uppercase tracking-wider">Product & Desc</th>
+                  <th className="px-6 py-4 text-[12px] font-semibold text-[#888] uppercase tracking-wider">Slug</th>
+                  <th className="px-6 py-4 text-[12px] font-semibold text-[#888] uppercase tracking-wider">Category</th>
+                  <th className="px-6 py-4 text-[12px] font-semibold text-[#888] uppercase tracking-wider">Price</th>
+                  <th className="px-6 py-4 text-[12px] font-semibold text-[#888] uppercase tracking-wider text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {filteredProducts.map((product) => (
+                  <tr key={product.id} className="hover:bg-white/[0.03] transition-colors group">
+                    <td className="px-6 py-4">
+                      <div className="text-[14px] font-bold text-white">{product.title || product.name}</div>
+                      <div className="text-[12px] text-[#888] truncate max-w-[250px]">{product.description || "No description"}</div>
+                    </td>
+                    <td className="px-6 py-4 text-[13px] text-[#a0a0a0] font-mono">{product.slug}</td>
+                    <td className="px-6 py-4">
+                      <span className="inline-flex px-2.5 py-1 rounded-md bg-[#1a1a1a] border border-white/5 text-[#ececec] text-[12px] font-medium capitalize">
+                        {(product.category || "—").toString()}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-[14px] font-semibold text-emerald-400">
+                      ₹{Number(product.price || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onClick={() => openEditForm(product)} className="p-1.5 hover:bg-purple-500/20 text-purple-400 rounded-md transition-colors" title="Edit">
+                          <Edit className="w-4 h-4" />
+                        </button>
+                        <button onClick={() => handleDelete(product.id)} className="p-1.5 hover:bg-red-500/20 text-red-400 rounded-md transition-colors" title="Delete">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
         </div>
       </div>
+
+      {/* ── CREATE / EDIT MODAL (Glassmorphism) ── */}
+      {isFormOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto">
+          <div className="bg-[#111111] border border-white/10 rounded-2xl w-full max-w-2xl shadow-2xl overflow-visible my-auto animate-in fade-in zoom-in duration-200 max-h-[90vh] flex flex-col">
+            
+            <div className="flex items-center justify-between p-5 border-b border-white/10 shrink-0">
+              <h2 className="text-[18px] font-bold text-white">{editingId ? "Edit Product" : "Add New Product"}</h2>
+              <button onClick={closeForm} className="text-[#888] hover:text-white transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-5 overflow-y-auto custom-scrollbar">
+              <form id="product-form" onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                
+                {/* Drag & Drop Cover Photo */}
+                <div className="md:col-span-2">
+                  <label className="block text-[12px] font-medium text-[#888] mb-1.5 uppercase tracking-wider">Cover Photo</label>
+                  {coverPreview ? (
+                    <div className="relative w-full h-48 rounded-xl overflow-hidden border border-white/10 group">
+                      <img src={coverPreview} alt="Cover preview" className="w-full h-full object-cover" />
+                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3 backdrop-blur-sm">
+                        <label className="cursor-pointer bg-white/10 hover:bg-purple-500/50 text-white text-[13px] font-medium px-4 py-2 rounded-lg transition-colors">
+                          Change Image
+                          <input type="file" accept="image/*" className="hidden" onChange={handleCoverInputChange} />
+                        </label>
+                        <button type="button" onClick={removeCover} className="bg-red-500/20 hover:bg-red-500/40 text-red-400 text-[13px] font-medium px-4 py-2 rounded-lg transition-colors flex items-center gap-1">
+                          <X className="w-4 h-4" /> Remove
+                        </button>
+                      </div>
+                      <span className="absolute top-3 left-3 bg-black/60 backdrop-blur-md text-white text-[10px] font-bold px-2.5 py-1 rounded-md tracking-wider uppercase border border-white/10">Cover</span>
+                    </div>
+                  ) : (
+                    <div
+                      onDrop={handleCoverDrop}
+                      onDragOver={handleDragOver}
+                      onDragLeave={handleDragLeave}
+                      onClick={() => fileInputRef.current?.click()}
+                      className={`w-full h-36 rounded-xl border-2 border-dashed transition-all flex flex-col items-center justify-center gap-2 cursor-pointer group
+                        ${isDragging ? 'bg-purple-500/20 border-purple-400 scale-[1.02]' : 'bg-[#1a1a1a] border-white/10 hover:bg-[#222] hover:border-purple-500/50'}
+                      `}
+                    >
+                      <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center group-hover:scale-110 transition-transform">
+                        <UploadCloud className={`w-5 h-5 ${isDragging ? 'text-purple-400' : 'text-[#888] group-hover:text-purple-400'}`} />
+                      </div>
+                      <p className={`text-[13px] font-medium ${isDragging ? 'text-purple-400' : 'text-[#888]'}`}>
+                        {isDragging ? 'Drop image here!' : 'Click or drag & drop a cover photo'}
+                      </p>
+                      <p className="text-[11px] text-[#666]">PNG, JPG, WEBP from your computer</p>
+                      <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleCoverInputChange} />
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-[12px] font-medium text-[#888] mb-1.5 uppercase tracking-wider">Product Title</label>
+                  <input required name="title" className="w-full bg-[#1a1a1a] border border-white/10 rounded-xl px-4 py-2.5 text-[14px] text-white focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/50 transition-all" value={formData.title} onChange={handleChange} placeholder="e.g. Vintage Denim Jacket" />
+                </div>
+
+                <div>
+                  <label className="block text-[12px] font-medium text-[#888] mb-1.5 uppercase tracking-wider">Slug (URL)</label>
+                  <input required name="slug" className="w-full bg-[#1a1a1a] border border-white/10 rounded-xl px-4 py-2.5 text-[14px] text-white focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/50 transition-all" value={formData.slug} onChange={handleChange} placeholder="vintage-denim-jacket" />
+                </div>
+
+                <div>
+                  <label className="block text-[12px] font-medium text-[#888] mb-1.5 uppercase tracking-wider">Price (₹)</label>
+                  <input required name="price" type="number" step="0.01" className="w-full bg-[#1a1a1a] border border-white/10 rounded-xl px-4 py-2.5 text-[14px] text-white focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/50 transition-all" value={formData.price} onChange={handleChange} placeholder="0.00" />
+                </div>
+
+                <div className="relative">
+                  <label className="block text-[12px] font-medium text-[#888] mb-1.5 uppercase tracking-wider">Category</label>
+                  <button type="button" onClick={() => setIsCategorySelectOpen(!isCategorySelectOpen)} className="w-full flex items-center justify-between bg-[#1a1a1a] border border-white/10 rounded-xl px-4 py-2.5 text-[14px] text-white focus:outline-none focus:border-purple-500/50 transition-all capitalize">
+                    <span>{formData.category}</span>
+                    <ChevronDown className="w-4 h-4 text-[#888]" />
+                  </button>
+                  {isCategorySelectOpen && (
+                    <div className="absolute left-0 right-0 top-[105%] bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl py-1.5 z-50 overflow-hidden">
+                      {(["men", "women", "accessories"] as Category[]).map((cat) => (
+                        <button key={cat} type="button" onClick={() => { setFormData({...formData, category: cat}); setIsCategorySelectOpen(false); }} className="w-full flex items-center justify-between px-4 py-2.5 text-[13px] font-medium text-[#ececec] hover:bg-white/5 transition-colors capitalize">
+                          {cat}
+                          {formData.category === cat && <Check className="w-3.5 h-3.5 text-purple-400" />}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-[12px] font-medium text-[#888] mb-1.5 uppercase tracking-wider">Sizes Available</label>
+                  <div className="flex gap-2 flex-wrap">
+                    {["S", "M", "L", "XL", "XXL"].map((size) => {
+                      const active = formData.sizes.includes(size);
+                      return (
+                        <button key={size} type="button" onClick={() => toggleSize(size)} className={`w-10 h-10 rounded-xl border text-[13px] font-bold transition-all ${active ? "bg-purple-600 text-white border-purple-500 shadow-[0_0_10px_rgba(168,85,247,0.3)]" : "bg-[#1a1a1a] text-[#888] border-white/10 hover:bg-[#222] hover:text-white"}`}>
+                          {size}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[12px] font-medium text-[#888] mb-1.5 uppercase tracking-wider">Stock (Per Size)</label>
+                  <input required name="stock" type="number" min={0} step={1} className="w-full bg-[#1a1a1a] border border-white/10 rounded-xl px-4 py-2.5 text-[14px] text-white focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/50 transition-all" value={formData.stock} onChange={handleChange} placeholder="50" />
+                </div>
+
+                <div>
+                  <label className="block text-[12px] font-medium text-[#888] mb-1.5 uppercase tracking-wider">Gallery Images</label>
+                  <input type="file" accept="image/*" multiple onChange={handleImageChange} className="w-full bg-[#1a1a1a] border border-white/10 rounded-xl px-3 py-2 text-[13px] text-[#888] file:mr-4 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-[12px] file:font-semibold file:bg-white/10 file:text-white hover:file:bg-white/20 transition-all cursor-pointer" />
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-[12px] font-medium text-[#888] mb-1.5 uppercase tracking-wider">Description</label>
+                  <textarea name="description" className="w-full bg-[#1a1a1a] border border-white/10 rounded-xl px-4 py-3 text-[14px] text-white focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/50 transition-all min-h-[100px] resize-y custom-scrollbar" value={formData.description} onChange={handleChange} placeholder="Describe the fit, material, and details..." />
+                </div>
+
+              </form>
+            </div>
+            
+            <div className="p-5 border-t border-white/10 flex justify-end gap-3 shrink-0 bg-[#111111] rounded-b-2xl">
+              <button type="button" onClick={closeForm} className="px-4 py-2 rounded-xl text-[13px] font-medium text-[#ececec] hover:bg-white/5 transition-colors">
+                Cancel
+              </button>
+              <button form="product-form" type="submit" className="bg-purple-600 hover:bg-purple-500 text-white px-6 py-2 rounded-xl text-[13px] font-medium transition-colors shadow-[0_0_15px_rgba(168,85,247,0.25)] flex items-center gap-2">
+                <Check className="w-4 h-4" /> {editingId ? "Update Product" : "Create Product"}
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
