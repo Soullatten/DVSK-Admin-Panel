@@ -37,7 +37,12 @@ export const productService = {
   updateVariant: async (productId: string, variantId: string, variantData: any) => {
     const response = await apiClient.put(`/products/${productId}/variants/${variantId}`, variantData);
     return response.data;
-  }
+  },
+
+  removeImage: async (productId: string, imageId: string) => {
+    const response = await apiClient.delete(`/products/${productId}/images/${imageId}`);
+    return response.data;
+  },
 };
 
 export const createProduct = (payload: {

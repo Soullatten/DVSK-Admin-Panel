@@ -1,34 +1,30 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, MapPin, Package, Clock, TrendingUp, Loader2, Activity, ChevronRight, CheckCircle2, Zap } from 'lucide-react';
+import { Search, MapPin, Package, Clock, TrendingUp, Loader2, Activity, ChevronRight, CheckCircle2, Zap, Eye, ShoppingBag, UserPlus, UserMinus, Globe2, ListOrdered } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import type { Socket } from 'socket.io-client';
+import { connectLiveFeed } from '../lib/liveSocket';
+import { orderService } from '../api/orderService';
 
-// ── Dummy Data Pool (Used only for the Manual Simulate Button for now) ──
-const CITY_POOL = [
-  { city: 'Mumbai', lng: 72.8777, lat: 19.0760 },
-  { city: 'Delhi', lng: 77.2090, lat: 28.6139 },
-  { city: 'Bangalore', lng: 77.5946, lat: 12.9716 },
-  { city: 'Hyderabad', lng: 78.4867, lat: 17.3850 },
-  { city: 'Ahmedabad', lng: 72.5714, lat: 23.0225 },
-  { city: 'Pune', lng: 72.8369, lat: 18.5204 },
-  { city: 'Chennai', lng: 80.2707, lat: 13.0827 },
-  { city: 'Kolkata', lng: 88.3639, lat: 22.5726 },
-  { city: 'Surat', lng: 72.8311, lat: 21.1702 },
-  { city: 'Jaipur', lng: 72.8128, lat: 26.9124 }
-];
+type ActivityKind = 'join' | 'view' | 'cart' | 'leave';
+interface ActivityItem {
+  key: string;
+  kind: ActivityKind;
+  ip: string;
+  path?: string;
+  productName?: string;
+  ts: number;
+}
 
-const generateOrder = (id: number) => {
-  const loc = CITY_POOL[Math.floor(Math.random() * CITY_POOL.length)];
-  return {
-    id: `100${id}`,
-    city: loc.city,
-    amount: `₹${(Math.floor(Math.random() * 150) + 15) * 100}`,
-    time: 'Just now',
-    lng: loc.lng + (Math.random() * 0.05 - 0.025),
-    lat: loc.lat + (Math.random() * 0.05 - 0.025),
-  };
+const formatTimeAgo = (ts: number): string => {
+  const diff = Math.floor((Date.now() - ts) / 1000);
+  if (diff < 5) return 'Just now';
+  if (diff < 60) return `${diff}s ago`;
+  const m = Math.floor(diff / 60);
+  if (m < 60) return `${m}m ago`;
+  return `${Math.floor(m / 60)}h ago`;
 };
 
 // ── Custom Glowing Radar Icon (Emerald Green) ──
@@ -61,15 +57,8 @@ const MapController = ({ focusLocation }: { focusLocation: { lat: number; lng: n
 };
 
 // ── EXPERT UI: FULLY ANIMATED LIVE VIEWERS HUD ──
-const LiveViewersHUD = () => {
-  const [viewers, setViewers] = useState(124);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setViewers(prev => Math.max(10, prev + (Math.floor(Math.random() * 9) - 4)));
-    }, 2500);
-    return () => clearInterval(interval);
-  }, []);
+const LiveViewersHUD = ({ count }: { count: number | null }) => {
+  const viewers = count ?? 0;
 
   return (
     <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="relative group cursor-default">
@@ -111,31 +100,127 @@ const LiveViewersHUD = () => {
 export default function LiveView() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
-  
+
   // 🔥 TRUE ZERO STATE: Waiting for backend connection
   const [liveOrders, setLiveOrders] = useState<any[]>([]);
   const [totalVolume, setTotalVolume] = useState(0);
   const [dispatchCount, setDispatchCount] = useState(0);
-  
+  const [activeShoppers, setActiveShoppers] = useState<number | null>(null);
+  const [liveActivity, setLiveActivity] = useState<ActivityItem[]>([]);
+  const [socketConnected, setSocketConnected] = useState(false);
+
   const [activeOrder, setActiveOrder] = useState<string | null>(null);
   const [focusLocation, setFocusLocation] = useState<{ lat: number; lng: number; zoom?: number } | null>(null);
+  const [viewMode, setViewMode] = useState<'stream' | 'locations'>('stream');
+  const [activeLocation, setActiveLocation] = useState<string | null>(null);
 
-  // ── THIS IS WHAT YOU WILL CALL FROM YOUR WEB SOCKET LATER ──
+  const locationsByCity = React.useMemo(() => {
+    const map = new Map<string, { city: string; count: number; total: number; lat: number; lng: number; lastTs: number }>();
+    for (const o of liveOrders) {
+      const key = (o.city || 'Unknown').toString();
+      const existing = map.get(key);
+      const amount = parseInt(String(o.amount).replace(/\D/g, '')) || 0;
+      if (existing) {
+        existing.count += 1;
+        existing.total += amount;
+        if (o.ts && o.ts > existing.lastTs) existing.lastTs = o.ts;
+      } else {
+        map.set(key, { city: key, count: 1, total: amount, lat: o.lat, lng: o.lng, lastTs: o.ts || Date.now() });
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => b.count - a.count);
+  }, [liveOrders]);
+
+  const focusOnLocation = (loc: { city: string; lat: number; lng: number }) => {
+    setActiveLocation(loc.city);
+    setActiveOrder(null);
+    setFocusLocation({ lat: loc.lat, lng: loc.lng, zoom: 8 });
+  };
+
   const handleIncomingOrder = useCallback((orderData: any) => {
-    setLiveOrders(prev => [orderData, ...prev].slice(0, 20)); // Prepend and keep last 20
+    setLiveOrders(prev => [orderData, ...prev].slice(0, 20));
     setTotalVolume(prev => prev + parseInt(orderData.amount.replace(/\D/g,'')));
     setDispatchCount(prev => prev + 1);
-    
-    // Auto focus map on new order
     setActiveOrder(orderData.id);
     setFocusLocation({ lat: orderData.lat, lng: orderData.lng, zoom: 7 });
   }, []);
 
-  // For testing UI before backend is connected
-  const triggerFakeOrder = () => {
-    const fakeData = generateOrder(Math.floor(Math.random() * 1000) + dispatchCount);
-    handleIncomingOrder(fakeData);
-  };
+  // Hydrate volume + dispatch count + the order list itself from today's real orders
+  // so the right-side panel and map markers survive a page refresh.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [stats, feed] = await Promise.all([
+          orderService.stats('Today'),
+          orderService.liveFeed('Today', 20),
+        ]);
+        if (cancelled) return;
+        setTotalVolume(Math.round(stats.totalRevenue));
+        setDispatchCount(stats.totalOrders);
+        if (Array.isArray(feed) && feed.length > 0) {
+          setLiveOrders(feed);
+        }
+      } catch (err) {
+        console.error('[LiveView] failed to hydrate', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const pushActivity = useCallback((item: Omit<ActivityItem, 'key'>) => {
+    setLiveActivity(prev => [
+      { ...item, key: `${item.ts}-${item.ip}-${Math.random().toString(36).slice(2, 8)}` },
+      ...prev,
+    ].slice(0, 30));
+  }, []);
+
+  const socketRef = useRef<Socket | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const socket = await connectLiveFeed();
+      if (cancelled) {
+        socket.disconnect();
+        return;
+      }
+      socketRef.current = socket;
+      socket.on('connect', () => setSocketConnected(true));
+      socket.on('disconnect', () => setSocketConnected(false));
+      if (socket.connected) setSocketConnected(true);
+      socket.on('order:placed', handleIncomingOrder);
+      socket.on('viewers:count', (data: { count: number }) => setActiveShoppers(data.count));
+      socket.on('visitors:snapshot', (list: Array<{ id: string; ip: string; path: string; joinedAt: number }>) => {
+        if (Array.isArray(list) && list.length > 0) {
+          setLiveActivity(prev => {
+            const existingKeys = new Set(prev.map(p => `${p.ip}-${p.kind}`));
+            const seeded: ActivityItem[] = list
+              .filter(v => !existingKeys.has(`${v.ip}-join`))
+              .map(v => ({
+                key: `${v.joinedAt}-${v.ip}-${Math.random().toString(36).slice(2, 8)}`,
+                kind: 'join',
+                ip: v.ip,
+                ts: v.joinedAt,
+              }));
+            return [...seeded, ...prev].slice(0, 30);
+          });
+        }
+      });
+      socket.on('visitor:join', (d: { ip: string; ts: number }) =>
+        pushActivity({ kind: 'join', ip: d.ip, ts: d.ts }));
+      socket.on('visitor:leave', (d: { ip: string; ts: number }) =>
+        pushActivity({ kind: 'leave', ip: d.ip, ts: d.ts }));
+      socket.on('page:view', (d: { ip: string; path: string; ts: number }) =>
+        pushActivity({ kind: 'view', ip: d.ip, path: d.path, ts: d.ts }));
+      socket.on('cart:add', (d: { ip: string; productName?: string; ts: number }) =>
+        pushActivity({ kind: 'cart', ip: d.ip, productName: d.productName, ts: d.ts }));
+    })();
+    return () => {
+      cancelled = true;
+      socketRef.current?.disconnect();
+      socketRef.current = null;
+    };
+  }, [handleIncomingOrder, pushActivity]);
 
   const focusOnOrder = (order: typeof liveOrders[0]) => {
     setActiveOrder(order.id);
@@ -197,7 +282,7 @@ export default function LiveView() {
           </div>
         </div>
 
-        <LiveViewersHUD />
+        <LiveViewersHUD count={activeShoppers} />
       </div>
 
       {/* ── RIGHT GLASS SIDEBAR (Live Orders Feed) ── */}
@@ -215,15 +300,6 @@ export default function LiveView() {
               <p className="text-[13px] text-[#888] font-medium">Monitoring real-time transactions</p>
             </div>
             
-            {/* 🔥 INTERACTIVE SIMULATE BUTTON FOR TESTING */}
-            <button 
-              onClick={triggerFakeOrder}
-              className="bg-white/5 hover:bg-emerald-500/20 border border-white/10 hover:border-emerald-500/50 px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all group"
-              title="Click to simulate an incoming order from Backend"
-            >
-              <Zap className="w-3.5 h-3.5 text-emerald-400 group-hover:animate-pulse" />
-              <span className="text-[11px] font-bold text-white whitespace-nowrap">Simulate Event</span>
-            </button>
           </div>
 
           <div className="grid grid-cols-2 gap-3 p-6 pb-2 relative z-10">
@@ -244,20 +320,133 @@ export default function LiveView() {
           </div>
 
           <div className="flex-1 overflow-y-auto px-6 py-4 relative z-10 custom-scrollbar">
-            <h3 className="text-[11px] font-bold text-[#555] tracking-widest uppercase mb-6 flex items-center gap-2">
-              Incoming Stream
-            </h3>
-            
-            {liveOrders.length === 0 ? (
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center justify-center py-16 text-center">
-                <div className="relative w-12 h-12 flex items-center justify-center mb-4 opacity-50">
-                  <div className="absolute inset-0 rounded-full border-2 border-emerald-500/20" />
-                  <div className="absolute inset-0 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin" />
-                  <div className="w-2 h-2 bg-emerald-500 rounded-full" />
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-[11px] font-bold text-[#555] tracking-widest uppercase flex items-center gap-2">
+                {viewMode === 'stream' ? 'Incoming Stream' : 'Order Locations'}
+              </h3>
+              <div className="flex items-center bg-[#ffffff05] border border-[#ffffff10] rounded-full p-0.5">
+                <button
+                  onClick={() => setViewMode('stream')}
+                  title="Stream"
+                  className={`flex items-center justify-center w-7 h-7 rounded-full transition-all duration-300 ${viewMode === 'stream' ? 'bg-emerald-500/20 text-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.25)]' : 'text-[#666] hover:text-[#aaa]'}`}
+                >
+                  <ListOrdered className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => setViewMode('locations')}
+                  title="Locations"
+                  className={`flex items-center justify-center w-7 h-7 rounded-full transition-all duration-300 ${viewMode === 'locations' ? 'bg-emerald-500/20 text-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.25)]' : 'text-[#666] hover:text-[#aaa]'}`}
+                >
+                  <Globe2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {viewMode === 'locations' ? (
+              locationsByCity.length === 0 ? (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center justify-center py-16 text-center">
+                  <Globe2 className="w-8 h-8 text-[#444] mb-3" />
+                  <p className="text-[13px] font-bold text-[#888]">No order locations yet</p>
+                  <p className="text-[11px] text-[#555] mt-1">Cities will light up here as orders arrive.</p>
+                </motion.div>
+              ) : (
+                <div className="space-y-3">
+                  <AnimatePresence>
+                    {locationsByCity.map((loc) => (
+                      <motion.button
+                        key={loc.city}
+                        initial={{ opacity: 0, x: 20, scale: 0.95 }}
+                        animate={{ opacity: 1, x: 0, scale: 1 }}
+                        exit={{ opacity: 0, x: 20 }}
+                        transition={{ type: 'spring', stiffness: 200, damping: 20 }}
+                        onClick={() => focusOnLocation(loc)}
+                        className={`w-full text-left bg-[#ffffff03] hover:bg-[#ffffff08] border ${activeLocation === loc.city ? 'border-emerald-400/40 shadow-[0_0_20px_rgba(52,211,153,0.15)]' : 'border-[#ffffff0a]'} p-4 rounded-2xl transition-all duration-300 group`}
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className="glowing-dot-wrapper shrink-0" style={{ width: 32, height: 32 }}>
+                            <div className="glowing-pulse" style={{ width: 32, height: 32 }} />
+                            <div className="glowing-dot" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between">
+                              <p className="text-[14px] font-semibold text-white tracking-wide truncate">{loc.city}</p>
+                              <span className="text-[11px] font-mono text-emerald-400 bg-emerald-400/10 border border-emerald-400/20 px-2 py-0.5 rounded-md">
+                                {loc.count} {loc.count === 1 ? 'order' : 'orders'}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between mt-1.5">
+                              <span className="text-[12px] text-[#888] font-medium">₹{loc.total.toLocaleString('en-IN')}</span>
+                              <span className="text-[#666] group-hover:text-white transition-colors text-[11px] font-medium flex items-center gap-1">
+                                Focus <ChevronRight className="w-3 h-3" />
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </motion.button>
+                    ))}
+                  </AnimatePresence>
                 </div>
-                <p className="text-[13px] font-bold text-[#888]">Awaiting backend connection...</p>
-                <p className="text-[11px] text-[#555] mt-1">Waiting for the first live order.</p>
-              </motion.div>
+              )
+            ) : liveOrders.length === 0 ? (
+              liveActivity.length === 0 ? (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center justify-center py-16 text-center">
+                  <div className="relative w-12 h-12 flex items-center justify-center mb-4 opacity-50">
+                    <div className="absolute inset-0 rounded-full border-2 border-emerald-500/20" />
+                    <div className="absolute inset-0 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin" />
+                    <div className="w-2 h-2 bg-emerald-500 rounded-full" />
+                  </div>
+                  <p className="text-[13px] font-bold text-[#888]">{socketConnected ? 'Connected · No visitors yet' : 'Awaiting backend connection...'}</p>
+                  <p className="text-[11px] text-[#555] mt-1">{socketConnected ? 'Visitor activity will stream here in real time.' : 'Trying to reach the live socket.'}</p>
+                </motion.div>
+              ) : (
+                <div className="relative border-l-2 border-[#ffffff0a] ml-4 space-y-4">
+                  <AnimatePresence>
+                    {liveActivity.map((evt, i) => {
+                      const palette =
+                        evt.kind === 'join' ? { dot: 'bg-emerald-500 shadow-[0_0_10px_#10b981]', accent: 'text-emerald-400', Icon: UserPlus, label: 'Visitor joined' }
+                        : evt.kind === 'leave' ? { dot: 'bg-[#555]', accent: 'text-[#888]', Icon: UserMinus, label: 'Visitor left' }
+                        : evt.kind === 'cart' ? { dot: 'bg-amber-400 shadow-[0_0_10px_#fbbf24]', accent: 'text-amber-300', Icon: ShoppingBag, label: 'Added to cart' }
+                        : { dot: 'bg-blue-400 shadow-[0_0_8px_#60a5fa]', accent: 'text-blue-300', Icon: Eye, label: 'Page view' };
+                      const PaletteIcon = palette.Icon;
+                      return (
+                        <motion.div
+                          key={evt.key}
+                          initial={{ opacity: 0, x: 20, scale: 0.95, height: 0 }}
+                          animate={{ opacity: 1, x: 0, scale: 1, height: 'auto' }}
+                          transition={{ type: "spring", stiffness: 200, damping: 20 }}
+                          className="relative pl-6"
+                        >
+                          <div className={`absolute -left-[7px] top-3.5 w-3 h-3 rounded-full border-4 border-[#0a0a0a] ${i === 0 ? palette.dot : 'bg-[#333]'}`} />
+                          <div className="bg-[#ffffff03] hover:bg-[#ffffff08] border border-[#ffffff0a] p-3 rounded-2xl transition-colors duration-300">
+                            <div className="flex items-start gap-3">
+                              <div className={`w-7 h-7 rounded-full bg-[#ffffff05] border border-[#ffffff10] flex items-center justify-center shrink-0 ${palette.accent}`}>
+                                <PaletteIcon className="w-3.5 h-3.5" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-[12px] font-semibold text-white tracking-wide">
+                                  {palette.label}
+                                  {evt.kind === 'view' && evt.path && (
+                                    <span className="ml-1.5 font-mono text-[11px] text-[#aaa]">{evt.path}</span>
+                                  )}
+                                  {evt.kind === 'cart' && evt.productName && (
+                                    <span className="ml-1.5 text-[11px] text-[#aaa]">{evt.productName}</span>
+                                  )}
+                                </p>
+                                <div className="flex items-center gap-3 mt-1">
+                                  <span className="text-[10px] text-[#666] font-mono">{evt.ip}</span>
+                                  <span className="flex items-center gap-1 text-[10px] text-[#555]">
+                                    <Clock className="w-2.5 h-2.5" /> {formatTimeAgo(evt.ts)}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </motion.div>
+                      );
+                    })}
+                  </AnimatePresence>
+                </div>
+              )
             ) : (
               <div className="relative border-l-2 border-[#ffffff0a] ml-4 space-y-6">
                 <AnimatePresence>

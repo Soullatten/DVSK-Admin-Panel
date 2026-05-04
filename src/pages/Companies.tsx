@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Building2, 
   Handshake, 
@@ -17,7 +17,8 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { useMainWebsite } from '../hooks/useMainWebsite';
+import { companiesApi } from '../api/marketingService';
+import { useAdminDataRefresh } from '../lib/useAdminDataRefresh';
 
 // ── Types & Demo Data ──
 type TabType = 'sponsors' | 'suppliers' | 'reels';
@@ -44,30 +45,27 @@ interface Reel {
   gradient: string;
 }
 
-const DEMO_SPONSORS: Company[] = [
-  { id: 'SP-1', name: 'RedBull Energy', type: 'Event Sponsor', status: 'Reviewing', contact: 'partners@redbull.com', budgetOrTerms: '$5,000 / event', location: 'Austria' },
-  { id: 'SP-2', name: 'Complex Media', type: 'Media Coverage', status: 'Pending', contact: 'collab@complex.com', budgetOrTerms: 'Revenue Split', location: 'New York, USA' },
-  { id: 'SP-3', name: 'SneakerCon', type: 'Booth Sponsor', status: 'Active', contact: 'hello@sneakercon.com', budgetOrTerms: 'Prime Booth Space', location: 'Los Angeles, USA' },
-];
-
-const DEMO_SUPPLIERS: Company[] = [
-  { id: 'SU-1', name: 'Apex Textiles Ltd.', type: 'Fabric Manufacturer', status: 'Active', contact: 'sales@apextex.com', budgetOrTerms: 'Net 30', location: 'Guangzhou, CN' },
-  { id: 'SU-2', name: 'Global Freight Fast', type: 'Logistics', status: 'Active', contact: 'dispatch@gff.com', budgetOrTerms: 'Net 60', location: 'Mumbai, IN' },
-  { id: 'SU-3', name: 'Premium Tags Co.', type: 'Packaging', status: 'Pending', contact: 'orders@premtags.com', budgetOrTerms: 'Pay on Order', location: 'Toronto, CA' },
-];
-
-const DEMO_REELS: Reel[] = [
-  { id: 'R-1', creator: 'Jordan K.', handle: '@jordan.kicks', views: '124.5k', likes: '12.2k', comments: '342', productFeatured: 'Heavyweight Hoodie', status: 'Live', gradient: 'from-purple-500 to-indigo-500' },
-  { id: 'R-2', creator: 'Mia Styles', handle: '@mia_fits', views: '89.2k', likes: '8.4k', comments: '156', productFeatured: 'Summer Cap Drop', status: 'Live', gradient: 'from-pink-500 to-rose-500' },
-  { id: 'R-3', creator: 'Streetwear Daily', handle: '@streetweardaily', views: '45.1k', likes: '4.1k', comments: '89', productFeatured: 'DVSK Cargo Pants', status: 'Awaiting Approval', gradient: 'from-emerald-500 to-teal-500' },
-  { id: 'R-4', creator: 'Alex Chen', handle: '@achen_style', views: '210.8k', likes: '24.5k', comments: '892', productFeatured: 'Heavyweight Hoodie', status: 'Live', gradient: 'from-blue-500 to-cyan-500' },
-];
-
 export default function Companies() {
-  const { data: liveData } = useMainWebsite('/companies');
-  
+  const [liveData, setLiveData] = useState<any[]>([]);
+
   // State
   const [activeTab, setActiveTab] = useState<TabType>('sponsors');
+
+  const refresh = async (tab?: TabType) => {
+    try {
+      const cat = tab === 'sponsors' ? 'SPONSOR' : tab === 'suppliers' ? 'SUPPLIER' : undefined;
+      const list = await companiesApi.list(cat);
+      setLiveData(list);
+    } catch (err) {
+      console.error('[Companies] failed to load', err);
+    }
+  };
+
+  useEffect(() => {
+    refresh(activeTab);
+  }, [activeTab]);
+
+  useAdminDataRefresh('companies', () => refresh(activeTab));
   const [searchQuery, setSearchQuery] = useState('');
   
   // Modal States
@@ -80,13 +78,24 @@ export default function Companies() {
   // New Company Form State
   const [newCompany, setNewCompany] = useState({ name: '', type: '', email: '' });
 
-  const handleAddCompany = (e: React.FormEvent) => {
+  const handleAddCompany = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCompany.name || !newCompany.email) return toast.error("Please fill in required fields.");
-    
-    setIsAddModalOpen(false);
-    toast.success(`Successfully added ${newCompany.name} to ${addType}s!`);
-    setNewCompany({ name: '', type: '', email: '' });
+    try {
+      await companiesApi.create({
+        name: newCompany.name,
+        type: newCompany.type || addType,
+        category: addType === 'Sponsor' ? 'SPONSOR' : 'SUPPLIER',
+        contact: newCompany.email,
+        status: 'Pending',
+      });
+      await refresh(activeTab);
+      setIsAddModalOpen(false);
+      toast.success(`Successfully added ${newCompany.name} to ${addType}s!`);
+      setNewCompany({ name: '', type: '', email: '' });
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error?.message || 'Failed to add partner');
+    }
   };
 
   const handleAcceptProposal = () => {
@@ -159,9 +168,9 @@ export default function Companies() {
           
           <div className="overflow-y-auto custom-scrollbar flex-1 p-6">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {(activeTab === 'sponsors' ? DEMO_SPONSORS : DEMO_SUPPLIERS)
-                .filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase()))
-                .map((company) => (
+              {(Array.isArray(liveData) ? liveData : [])
+                .filter((c: any) => c?.name?.toLowerCase()?.includes(searchQuery.toLowerCase()))
+                .map((company: any) => (
                 <div key={company.id} className="bg-white/5 border border-white/10 rounded-2xl p-5 hover:bg-white/10 transition-all group">
                   <div className="flex justify-between items-start mb-4">
                     <div className="flex items-center gap-3">
@@ -207,8 +216,11 @@ export default function Companies() {
       {/* ── TAB CONTENT: CREATOR REELS ── */}
       {activeTab === 'reels' && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex-1 flex flex-col min-h-0">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 overflow-y-auto custom-scrollbar pb-6 pr-2">
-            {DEMO_REELS.map((reel) => (
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-10 text-center text-[#888] text-[14px]">
+            No creator reels yet. UGC tracking is not connected to your storefront.
+          </div>
+          <div className="hidden">
+            {[].map((reel: any) => (
               <div key={reel.id} className="relative group rounded-3xl overflow-hidden bg-[#111] border border-white/10 aspect-[9/16] shadow-xl cursor-pointer" onClick={() => setViewingReel(reel)}>
                 <div className={`absolute inset-0 bg-gradient-to-br ${reel.gradient} opacity-80 group-hover:scale-105 transition-transform duration-700`} />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />

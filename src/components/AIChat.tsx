@@ -1,11 +1,42 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Loader2, Sparkles, Activity, Eye, ArrowUp, Bot } from 'lucide-react';
+import { Loader2, Sparkles, Activity, Eye, ArrowUp, Bot, Paperclip, X, FileText, Image as ImageIcon, Wrench } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { apiClient } from '../api/client';
+
+export type Attachment = {
+  kind: 'image' | 'text' | 'csv';
+  name: string;
+  mimeType: string;
+  dataUrl?: string;  // for images (base64) — also useful for previews
+  text?: string;     // extracted text for text/csv
+  size: number;
+};
 
 export type Message = {
   role: 'user' | 'assistant' | 'system';
   content: string;
+  attachments?: Attachment[];
+  toolEvents?: Array<{ name: string; args: any; result: any }>;
 };
+
+const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+const SUPPORTED_TEXT_EXT = ['.txt', '.md', '.json', '.log', '.csv', '.tsv'];
+
+const readFileAsDataUrl = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+
+const readFileAsText = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(file);
+  });
 
 export interface ChatProps {
   currentChatId?: string | null;
@@ -19,9 +50,11 @@ export default function AIChat({ currentChatId, chatHistory, updateChat }: ChatP
   const [isTyping, setIsTyping] = useState(false);
   const [currentScreen, setCurrentScreen] = useState<string | null>(null);
   const [isFocused, setIsFocused] = useState(false);
-  
+  const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
+
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ── 1. LOAD CHAT HISTORY ──
   useEffect(() => {
@@ -86,18 +119,66 @@ export default function AIChat({ currentChatId, chatHistory, updateChat }: ChatP
     }
   };
 
+  const handleAttachClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFilesSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    const next: Attachment[] = [];
+    for (const file of files) {
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        console.warn('Attachment too large:', file.name);
+        continue;
+      }
+      const isImage = file.type.startsWith('image/');
+      const lowerName = file.name.toLowerCase();
+      const isText = !isImage && (
+        file.type.startsWith('text/') ||
+        file.type.includes('json') ||
+        SUPPORTED_TEXT_EXT.some((ext) => lowerName.endsWith(ext))
+      );
+      try {
+        if (isImage) {
+          const dataUrl = await readFileAsDataUrl(file);
+          next.push({ kind: 'image', name: file.name, mimeType: file.type, dataUrl, size: file.size });
+        } else if (isText) {
+          const text = await readFileAsText(file);
+          const kind: Attachment['kind'] = lowerName.endsWith('.csv') || lowerName.endsWith('.tsv') ? 'csv' : 'text';
+          next.push({ kind, name: file.name, mimeType: file.type || 'text/plain', text, size: file.size });
+        } else {
+          console.warn('Unsupported file type:', file.type, '— only images and text/csv files are supported.');
+        }
+      } catch (err) {
+        console.error('Failed to read file:', file.name, err);
+      }
+    }
+    setPendingAttachments((prev) => [...prev, ...next]);
+    e.target.value = '';
+  };
+
+  const removePendingAttachment = (index: number) => {
+    setPendingAttachments((prev) => prev.filter((_, i) => i !== index));
+  };
+
   // ── 3. SEND MESSAGE LOGIC ──
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!input.trim() || isTyping) return;
+    if ((!input.trim() && pendingAttachments.length === 0) || isTyping) return;
 
     const userMessage = input.trim();
+    const attachmentsForMessage = pendingAttachments;
     setInput('');
-    
+    setPendingAttachments([]);
+
     const currentId = activeSessionId || `chat_${Date.now()}`;
     if (!activeSessionId) setActiveSessionId(currentId);
 
-    const newMessages: Message[] = [...messages, { role: 'user', content: userMessage }];
+    const newMessages: Message[] = [
+      ...messages,
+      { role: 'user', content: userMessage, attachments: attachmentsForMessage },
+    ];
     setMessages(newMessages);
     saveToHistory(currentId, newMessages);
     setIsTyping(true);
@@ -112,24 +193,43 @@ export default function AIChat({ currentChatId, chatHistory, updateChat }: ChatP
     }
 
     try {
-      const response = await fetch('http://localhost:5001/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: newMessages.filter(m => m.role !== 'system'), 
-          pastMemory: localStorage.getItem('dvsk_memory') || "No previous memory.",
-          pageContext: currentPageContext 
-        }),
+      const { data } = await apiClient.post('/admin/chat', {
+        messages: newMessages
+          .filter(m => m.role !== 'system')
+          .map(m => ({
+            role: m.role,
+            content: m.content,
+            attachments: m.attachments?.map(a => ({
+              kind: a.kind,
+              name: a.name,
+              mimeType: a.mimeType,
+              dataUrl: a.dataUrl,
+              text: a.text,
+            })),
+          })),
+        pastMemory: localStorage.getItem('dvsk_memory') || 'No previous memory.',
+        pageContext: currentPageContext,
       });
 
-      if (!response.ok) throw new Error('Failed to connect to backend');
-      const data = await response.json();
-      
-      const finalMessages: Message[] = [...newMessages, { role: 'assistant', content: data.reply }];
+      const reply = data?.data?.reply ?? data?.reply ?? '';
+      const toolEvents = data?.data?.toolEvents ?? [];
+
+      const finalMessages: Message[] = [
+        ...newMessages,
+        { role: 'assistant', content: reply, toolEvents },
+      ];
       setMessages(finalMessages);
       saveToHistory(currentId, finalMessages);
-    } catch (error) {
-      const errorMessages: Message[] = [...newMessages, { role: 'assistant', content: '⚠️ Connection lost. Ensure the DVSK backend is running on port 5001.' }];
+    } catch (error: any) {
+      const msg =
+        error?.response?.data?.error?.message ||
+        error?.response?.data?.message ||
+        error?.message ||
+        'Connection lost.';
+      const errorMessages: Message[] = [
+        ...newMessages,
+        { role: 'assistant', content: `⚠️ ${msg} Ensure the DVSK main website backend is running on port 5000 and you are logged in as admin.` },
+      ];
       setMessages(errorMessages);
       saveToHistory(currentId, errorMessages);
     } finally {
@@ -181,8 +281,35 @@ export default function AIChat({ currentChatId, chatHistory, updateChat }: ChatP
               >
                 {isUser ? (
                   // ── USER MESSAGE (Purple Accent) ──
-                  <div className="max-w-[75%] px-4 py-2.5 bg-purple-600 text-white rounded-2xl rounded-tr-sm text-[14px] leading-relaxed shadow-[0_4px_15px_rgba(147,51,234,0.2)] font-medium">
-                    {msg.content}
+                  <div className="max-w-[75%] flex flex-col items-end gap-2">
+                    {msg.attachments && msg.attachments.length > 0 && (
+                      <div className="flex flex-wrap gap-2 justify-end">
+                        {msg.attachments.map((att, ai) =>
+                          att.kind === 'image' && att.dataUrl ? (
+                            <img
+                              key={ai}
+                              src={att.dataUrl}
+                              alt={att.name}
+                              className="max-w-[220px] max-h-[220px] rounded-xl border border-purple-400/30 shadow-lg object-cover"
+                            />
+                          ) : (
+                            <div
+                              key={ai}
+                              className="bg-purple-600/20 border border-purple-500/30 text-purple-100 px-3 py-2 rounded-xl flex items-center gap-2 text-[12px] font-medium"
+                            >
+                              <FileText className="w-3.5 h-3.5" />
+                              <span className="font-mono">{att.name}</span>
+                              <span className="text-purple-300/70">{Math.round(att.size / 1024)} KB</span>
+                            </div>
+                          )
+                        )}
+                      </div>
+                    )}
+                    {msg.content && (
+                      <div className="px-4 py-2.5 bg-purple-600 text-white rounded-2xl rounded-tr-sm text-[14px] leading-relaxed shadow-[0_4px_15px_rgba(147,51,234,0.2)] font-medium">
+                        {msg.content}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   // ── NAVYA MESSAGE ──
@@ -190,13 +317,39 @@ export default function AIChat({ currentChatId, chatHistory, updateChat }: ChatP
                     <div className="w-8 h-8 rounded-full bg-gradient-to-b from-[#222] to-[#111] border border-white/10 flex items-center justify-center flex-shrink-0 shadow-lg mt-0.5 group-hover:border-purple-500/30 transition-colors duration-300">
                       <Sparkles className="w-4 h-4 text-purple-400" />
                     </div>
-                    <div className="text-[14.5px] leading-relaxed text-[#d4d4d4] pt-1 font-normal tracking-wide">
+                    <div className="text-[14.5px] leading-relaxed text-[#d4d4d4] pt-1 font-normal tracking-wide flex-1">
                       {msg.content.split('\n').map((line, i) => (
                         <React.Fragment key={i}>
                           {line}
                           {i !== msg.content.split('\n').length - 1 && <div className="h-2" />}
                         </React.Fragment>
                       ))}
+                      {msg.toolEvents && msg.toolEvents.length > 0 && (
+                        <div className="mt-3 space-y-1.5">
+                          {msg.toolEvents.map((evt, ei) => (
+                            <div
+                              key={ei}
+                              className="flex items-center gap-2 text-[11px] text-[#888] bg-[#111] border border-white/5 rounded-lg px-2.5 py-1.5"
+                            >
+                              <Wrench className="w-3 h-3 text-purple-400 flex-shrink-0" />
+                              <span className="font-mono text-purple-300">{evt.name}</span>
+                              <span className="text-[#555]">·</span>
+                              <span className="font-mono truncate text-[#666]">
+                                {(() => {
+                                  const r = evt.result;
+                                  if (!r) return 'no result';
+                                  if (Array.isArray(r)) return `${r.length} rows`;
+                                  if (r.error) return `error: ${r.error}`;
+                                  if (r.ok) return 'ok';
+                                  if (typeof r.totalOrders === 'number') return `${r.totalOrders} orders · ₹${Math.round(r.totalRevenue).toLocaleString('en-IN')}`;
+                                  if (typeof r.count === 'number') return `${r.count}`;
+                                  return 'done';
+                                })()}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -259,25 +412,76 @@ export default function AIChat({ currentChatId, chatHistory, updateChat }: ChatP
             ${isFocused ? 'border-purple-500/40 shadow-[0_0_20px_rgba(168,85,247,0.15)]' : 'border-white/10 group-hover:border-white/20'}
           `} />
           
+          {pendingAttachments.length > 0 && (
+            <div className="relative px-3 pt-3 pb-1 flex flex-wrap gap-2">
+              {pendingAttachments.map((att, i) => (
+                <div
+                  key={i}
+                  className="bg-[#1a1a1a] border border-white/10 rounded-xl pl-2 pr-1.5 py-1.5 flex items-center gap-2 text-[11px] text-[#ccc]"
+                >
+                  {att.kind === 'image' && att.dataUrl ? (
+                    <img src={att.dataUrl} alt={att.name} className="w-8 h-8 object-cover rounded-md" />
+                  ) : (
+                    <div className="w-8 h-8 rounded-md bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
+                      {att.kind === 'image' ? (
+                        <ImageIcon className="w-3.5 h-3.5 text-purple-400" />
+                      ) : (
+                        <FileText className="w-3.5 h-3.5 text-purple-400" />
+                      )}
+                    </div>
+                  )}
+                  <div className="flex flex-col leading-tight">
+                    <span className="font-mono truncate max-w-[150px]">{att.name}</span>
+                    <span className="text-[#666] text-[10px]">{Math.round(att.size / 1024)} KB</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removePendingAttachment(i)}
+                    className="ml-1 w-6 h-6 rounded-md hover:bg-red-500/20 text-[#888] hover:text-red-400 flex items-center justify-center"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="relative flex items-end p-1.5">
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="image/*,.txt,.md,.json,.log,.csv,.tsv,text/*"
+              onChange={handleFilesSelected}
+              className="hidden"
+            />
+            <button
+              type="button"
+              onClick={handleAttachClick}
+              disabled={isTyping}
+              title="Attach images or text/CSV files"
+              className="mb-0.5 ml-0.5 w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-200 focus:outline-none flex-shrink-0 text-[#888] hover:text-purple-400 hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Paperclip className="w-4 h-4" strokeWidth={2} />
+            </button>
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onFocus={() => setIsFocused(true)}
               onBlur={() => setIsFocused(false)}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); } }}
-              placeholder={currentScreen ? `Ask DVSK about ${currentScreen}...` : "Message DVSK..."}
+              placeholder={currentScreen ? `Ask Navya about ${currentScreen}...` : "Message Navya — drop files, ask about DVSK..."}
               className="flex-1 max-h-[120px] min-h-[44px] bg-transparent border-none outline-none text-[#ececec] placeholder-[#6b6b6b] px-3 py-2.5 text-[14px] resize-none leading-relaxed custom-scrollbar font-medium"
               disabled={isTyping}
               rows={1}
             />
             <button
               type="submit"
-              disabled={!input.trim() || isTyping}
+              disabled={(!input.trim() && pendingAttachments.length === 0) || isTyping}
               className={`
                 mb-0.5 mr-0.5 w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-200 focus:outline-none flex-shrink-0
-                ${(!input.trim() || isTyping) 
-                  ? 'bg-[#222] text-[#555]' 
+                ${((!input.trim() && pendingAttachments.length === 0) || isTyping)
+                  ? 'bg-[#222] text-[#555]'
                   : 'bg-white text-black hover:bg-purple-500 hover:text-white shadow-lg hover:shadow-purple-500/25 hover:scale-105'
                 }
               `}

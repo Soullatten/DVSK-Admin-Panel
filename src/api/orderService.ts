@@ -42,14 +42,14 @@ export interface ApiOrder {
   createdAt: string;
   updatedAt: string;
 
-  User?: {
+  user?: {
     id?: string;
     name?: string | null;
     email?: string | null;
     phone?: string | null;
   } | null;
 
-  Address?: {
+  address?: {
     id: string;
     label: string;
     fullName: string;
@@ -64,53 +64,84 @@ export interface ApiOrder {
 
   items?: ApiOrderItem[];
 
-  Payment?: {
-    id: string;
-    orderId: string;
-    amount: string | number;
-    currency: string;
+  payment?: {
+    id?: string;
+    orderId?: string;
+    amount?: string | number;
+    currency?: string;
     method?: string | null;
     status?: string;
-    createdAt: string;
+    createdAt?: string;
   } | null;
 }
 
 export interface OrderStatsSummary {
+  period?: string;
   daily: {
-    date: string;    // "2026-04-22"
-    count: number;   // number of orders that day
-    revenue: number; // total revenue that day
+    date: string;
+    count: number;
+    revenue: number;
   }[];
   totalOrders: number;
   totalRevenue: number;
+  totalSubtotal?: number;
+  totalDiscount?: number;
+  totalShipping?: number;
+  totalTax?: number;
+  netSales?: number;
+  activeDays?: number;
+}
+
+export type StatsPeriod = "Today" | "Last 7 days" | "Last 30 days" | "Last 90 days";
+
+interface ApiEnvelope<T> {
+  success: boolean;
+  data: T;
+  message?: string;
 }
 
 export const orderService = {
-  // GET /api/orders
-  list: async () => {
-    const res = await apiClient.get<ApiOrder[]>("/orders");
-    return res.data;
+  list: async (): Promise<ApiOrder[]> => {
+    const res = await apiClient.get<ApiEnvelope<ApiOrder[]>>("/orders/admin/all");
+    const payload = res.data?.data;
+    return Array.isArray(payload) ? payload : [];
   },
 
-  // GET /api/orders/:id
-  getById: async (id: string) => {
-    const res = await apiClient.get<ApiOrder>(`/orders/${id}`);
-    return res.data;
+  getById: async (id: string): Promise<ApiOrder | null> => {
+    const res = await apiClient.get<ApiEnvelope<ApiOrder>>(`/orders/${id}`);
+    return res.data?.data ?? null;
   },
 
-  // PATCH /api/orders/:id/status
-  updateStatus: async (id: string, status: string) => {
-    const res = await apiClient.patch<ApiOrder>(`/orders/${id}/status`, {
-      status,
-    });
-    return res.data;
+  getByIdAdmin: async (id: string): Promise<ApiOrder | null> => {
+    const res = await apiClient.get<ApiEnvelope<ApiOrder>>(`/orders/admin/${id}`);
+    return res.data?.data ?? null;
   },
 
-  // GET /api/orders/stats/summary
-  stats: async () => {
-    const res = await apiClient.get<OrderStatsSummary>(
-      "/orders/stats/summary"
+  updateStatus: async (id: string, status: string): Promise<ApiOrder | null> => {
+    const res = await apiClient.put<ApiEnvelope<ApiOrder>>(
+      `/orders/admin/${id}/status`,
+      { status }
     );
-    return res.data;
+    return res.data?.data ?? null;
+  },
+
+  stats: async (period: StatsPeriod = "Last 30 days"): Promise<OrderStatsSummary> => {
+    const res = await apiClient.get<ApiEnvelope<OrderStatsSummary>>(
+      "/orders/admin/stats",
+      { params: { period } }
+    );
+    const payload = res.data?.data;
+    return payload ?? { daily: [], totalOrders: 0, totalRevenue: 0 };
+  },
+
+  liveFeed: async (
+    period: "Today" | "Last 7 days" | "Last 30 days" = "Today",
+    limit: number = 20
+  ): Promise<Array<{ id: string; city: string; amount: string; time: string; lat: number; lng: number; ts: number; createdAt: string }>> => {
+    const res = await apiClient.get<ApiEnvelope<any[]>>(
+      "/orders/admin/live-feed",
+      { params: { period, limit } }
+    );
+    return Array.isArray(res.data?.data) ? res.data.data : [];
   },
 };

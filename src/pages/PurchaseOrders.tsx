@@ -1,28 +1,36 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  FileText, 
-  MapPin, 
-  Package, 
-  CheckCircle2, 
+import {
+  FileText,
+  MapPin,
+  Package,
+  CheckCircle2,
   Calendar,
   X,
   ArrowLeft,
   Plus,
   Trash2,
-  Truck
+  Truck,
+  Loader2,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { MapContainer, TileLayer, Marker, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import toast from 'react-hot-toast';
-import { useMainWebsite } from '../hooks/useMainWebsite';
+import {
+  purchaseOrderService,
+  geocodeCity,
+  type ApiPurchaseOrder,
+  type POStatus,
+} from '../api/purchaseOrderService';
+import { useAdminDataRefresh } from '../lib/useAdminDataRefresh';
 
-// ── Types & Demo Data ──
-type OrderStatus = 'Processing' | 'In Transit' | 'Customs' | 'Delivered';
+// ── Types ──
+type OrderStatus = 'Processing' | 'In Transit' | 'Customs' | 'Delivered' | 'Cancelled';
 
 interface SupplierOrder {
   id: string;
+  orderNumber: string;
   supplier: string;
   city: string;
   country: string;
@@ -32,15 +40,63 @@ interface SupplierOrder {
   items: string;
   lat: number;
   lng: number;
-  progress: number; 
+  progress: number;
 }
 
-const INITIAL_ORDERS: SupplierOrder[] = [
-  { id: 'PO-9001', supplier: 'Apex Textiles Ltd.', city: 'Guangzhou', country: 'China', amount: '$12,500', status: 'In Transit', eta: 'May 14, 2026', items: '5,000x Cotton Tees', lat: 23.1291, lng: 113.2644, progress: 65 },
-  { id: 'PO-9002', supplier: 'Lusso Leathers', city: 'Milan', country: 'Italy', amount: '$8,200', status: 'Processing', eta: 'May 28, 2026', items: '300x Premium Bags', lat: 45.4642, lng: 9.1900, progress: 15 },
-  { id: 'PO-9003', supplier: 'Neo Synth Fabrics', city: 'Seoul', country: 'South Korea', amount: '$24,100', status: 'Customs', eta: 'May 06, 2026', items: '2,500x Windbreakers', lat: 37.5665, lng: 126.9780, progress: 85 },
-  { id: 'PO-9004', supplier: 'Mumbai Garments', city: 'Mumbai', country: 'India', amount: '₹4,50,000', status: 'Delivered', eta: 'May 01, 2026', items: '1,000x Denim Jeans', lat: 19.0760, lng: 72.8777, progress: 100 },
-];
+const STATUS_FROM_API: Record<POStatus, OrderStatus> = {
+  PROCESSING: 'Processing',
+  IN_TRANSIT: 'In Transit',
+  CUSTOMS: 'Customs',
+  DELIVERED: 'Delivered',
+  CANCELLED: 'Cancelled',
+};
+
+const NEXT_STATUS_API: Record<POStatus, POStatus | null> = {
+  PROCESSING: 'IN_TRANSIT',
+  IN_TRANSIT: 'CUSTOMS',
+  CUSTOMS: 'DELIVERED',
+  DELIVERED: null,
+  CANCELLED: null,
+};
+
+const STATUS_TO_API: Record<OrderStatus, POStatus> = {
+  Processing: 'PROCESSING',
+  'In Transit': 'IN_TRANSIT',
+  Customs: 'CUSTOMS',
+  Delivered: 'DELIVERED',
+  Cancelled: 'CANCELLED',
+};
+
+const fmtAmount = (amt: string | number, currency: string = 'INR') => {
+  const n = Number(amt) || 0;
+  if (currency === 'USD') return `$${n.toLocaleString('en-US')}`;
+  if (currency === 'EUR') return `€${n.toLocaleString('en-DE')}`;
+  return `₹${n.toLocaleString('en-IN')}`;
+};
+
+const fmtDate = (iso?: string | null) => {
+  if (!iso) return 'TBD';
+  try {
+    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
+  } catch {
+    return 'TBD';
+  }
+};
+
+const apiToView = (p: ApiPurchaseOrder): SupplierOrder => ({
+  id: p.id,
+  orderNumber: p.orderNumber,
+  supplier: p.supplier,
+  city: p.city,
+  country: p.country,
+  amount: fmtAmount(p.amount, p.currency),
+  status: STATUS_FROM_API[p.status],
+  eta: fmtDate(p.eta),
+  items: p.itemsLabel,
+  lat: typeof p.lat === 'number' ? p.lat : 20,
+  lng: typeof p.lng === 'number' ? p.lng : 0,
+  progress: p.progress,
+});
 
 // ── Custom Glowing Marker ──
 const createGlowingIcon = (status: OrderStatus) => {
@@ -79,24 +135,35 @@ const MapController = ({ focusLocation }: { focusLocation: { lat: number; lng: n
 
 // ── Main Component ──
 export default function PurchaseOrders() {
-  const { data: liveData, loading: liveLoading, error: liveError, viewOnMainWebsite } = useMainWebsite('/purchaseorders');
-  console.log("Hooks:", { liveLoading, liveError, viewOnMainWebsite });
-
-  // App State
-  const [orders, setOrders] = useState<SupplierOrder[]>(() => {
-    if (Array.isArray(liveData) && liveData.length > 0) {
-      return liveData as SupplierOrder[];
-    }
-    return INITIAL_ORDERS;
-  });
+  const [orders, setOrders] = useState<SupplierOrder[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
   const [activeOrder, setActiveOrder] = useState<SupplierOrder | null>(null);
   const [focusLocation, setFocusLocation] = useState<{ lat: number; lng: number; zoom?: number } | null>(null);
-  
+
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState({
     supplier: '', city: '', country: '', amount: '', items: '', eta: ''
   });
+
+  const refresh = async () => {
+    try {
+      const list = await purchaseOrderService.list();
+      setOrders(list.map(apiToView));
+    } catch (err: any) {
+      console.error('[PurchaseOrders] failed to load:', err);
+      toast.error('Failed to load purchase orders');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  useAdminDataRefresh('purchase-orders', refresh);
 
   // ── Handlers ──
   const handleOrderClick = (order: SupplierOrder) => {
@@ -111,67 +178,84 @@ export default function PurchaseOrders() {
     setFocusLocation(null);
   };
 
-  const handleCreatePO = (e: React.FormEvent) => {
+  const handleCreatePO = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.supplier || !formData.city) {
       toast.error('Supplier and City are required');
       return;
     }
 
-    // Generate random coordinates near Asia/Europe for demo purposes
-    const randomLat = 10 + Math.random() * 40;
-    const randomLng = 70 + Math.random() * 50;
-
-    const newPO: SupplierOrder = {
-      id: `PO-${Math.floor(Math.random() * 9000) + 1000}`,
-      supplier: formData.supplier,
-      city: formData.city,
-      country: formData.country || 'Unknown',
-      amount: formData.amount ? `$${formData.amount}` : '$0',
-      items: formData.items || 'Standard Freight',
-      eta: formData.eta || 'TBD',
-      status: 'Processing',
-      progress: 15,
-      lat: randomLat,
-      lng: randomLng
-    };
-
-    setOrders([newPO, ...orders]);
-    setIsModalOpen(false);
-    setFormData({ supplier: '', city: '', country: '', amount: '', items: '', eta: '' });
-    toast.success('Purchase Order Created!');
+    setCreating(true);
+    try {
+      const coords = await geocodeCity(formData.city, formData.country);
+      const created = await purchaseOrderService.create({
+        supplier: formData.supplier,
+        city: formData.city,
+        country: formData.country || 'Unknown',
+        amount: Number(formData.amount) || 0,
+        currency: 'INR',
+        itemsLabel: formData.items || 'Standard Freight',
+        eta: formData.eta || undefined,
+        ...(coords && { lat: coords.lat, lng: coords.lng }),
+      });
+      if (created) {
+        setOrders(prev => [apiToView(created), ...prev]);
+        setIsModalOpen(false);
+        setFormData({ supplier: '', city: '', country: '', amount: '', items: '', eta: '' });
+        toast.success('Purchase Order Created!');
+      }
+    } catch (err: any) {
+      const msg =
+        err?.response?.data?.error?.message ||
+        err?.response?.data?.message ||
+        err?.message ||
+        'Failed to create purchase order';
+      toast.error(msg);
+    } finally {
+      setCreating(false);
+    }
   };
 
-  const advanceOrderStatus = () => {
+  const advanceOrderStatus = async () => {
     if (!activeOrder) return;
-
-    let newStatus: OrderStatus = activeOrder.status;
-    let newProgress = activeOrder.progress;
-
-    if (activeOrder.status === 'Processing') {
-      newStatus = 'In Transit'; newProgress = 45;
-    } else if (activeOrder.status === 'In Transit') {
-      newStatus = 'Customs'; newProgress = 85;
-    } else if (activeOrder.status === 'Customs') {
-      newStatus = 'Delivered'; newProgress = 100;
-    } else {
+    const currentApi = STATUS_TO_API[activeOrder.status];
+    const nextApi = NEXT_STATUS_API[currentApi];
+    if (!nextApi) {
       toast('Order is already delivered!', { icon: '✅' });
       return;
     }
-
-    const updatedOrder = { ...activeOrder, status: newStatus, progress: newProgress };
-    
-    // Update local state
-    setOrders(orders.map(o => o.id === activeOrder.id ? updatedOrder : o));
-    setActiveOrder(updatedOrder); // Update HUD
-    toast.success(`Status updated to ${newStatus}`);
+    try {
+      const updated = await purchaseOrderService.updateStatus(activeOrder.id, nextApi);
+      if (updated) {
+        const view = apiToView(updated);
+        setOrders(prev => prev.map(o => (o.id === view.id ? view : o)));
+        setActiveOrder(view);
+        if (view.status === 'Delivered') {
+          toast.success('Delivered · Stock auto-updated on inventory');
+        } else {
+          toast.success(`Status updated to ${view.status}`);
+        }
+      }
+    } catch (err: any) {
+      const msg =
+        err?.response?.data?.error?.message ||
+        err?.response?.data?.message ||
+        err?.message ||
+        'Failed to update status';
+      toast.error(msg);
+    }
   };
 
-  const deleteOrder = (e: React.MouseEvent, id: string) => {
+  const deleteOrder = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    setOrders(orders.filter(o => o.id !== id));
-    if (activeOrder?.id === id) closeMap();
-    toast.success('Order deleted');
+    try {
+      await purchaseOrderService.remove(id);
+      setOrders(prev => prev.filter(o => o.id !== id));
+      if (activeOrder?.id === id) closeMap();
+      toast.success('Order deleted');
+    } catch (err: any) {
+      toast.error('Failed to delete');
+    }
   };
 
   const getStatusColor = (status: OrderStatus) => {
@@ -224,7 +308,12 @@ export default function PurchaseOrders() {
               </div>
               
               <div className="overflow-y-auto custom-scrollbar flex-1">
-                {orders.length === 0 ? (
+                {loading ? (
+                  <div className="flex flex-col items-center justify-center h-full text-[#888]">
+                    <Loader2 className="w-8 h-8 mb-4 animate-spin text-purple-400" />
+                    <p>Loading purchase orders…</p>
+                  </div>
+                ) : orders.length === 0 ? (
                    <div className="flex flex-col items-center justify-center h-full text-[#888]">
                      <Package className="w-12 h-12 mb-4 opacity-50" />
                      <p>No active purchase orders.</p>
@@ -252,7 +341,7 @@ export default function PurchaseOrders() {
                               <div className="w-2 h-2 rounded-full bg-white/20" />
                               <div>
                                 <div className="text-[15px] font-bold text-white">{order.supplier}</div>
-                                <div className="text-[13px] text-[#888] font-mono mt-0.5">{order.id}</div>
+                                <div className="text-[13px] text-[#888] font-mono mt-0.5">{order.orderNumber}</div>
                               </div>
                             </div>
                           </td>
@@ -331,7 +420,7 @@ export default function PurchaseOrders() {
                     <div>
                       <div className="text-[11px] font-bold text-purple-400 tracking-widest uppercase mb-1">Live Tracking</div>
                       <h3 className="text-[20px] font-bold text-white leading-tight">{activeOrder.supplier}</h3>
-                      <p className="text-[13px] text-[#888] font-mono mt-1">{activeOrder.id}</p>
+                      <p className="text-[13px] text-[#888] font-mono mt-1">{activeOrder.orderNumber}</p>
                     </div>
                     <button onClick={closeMap} className="p-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-[#888] transition-colors cursor-pointer">
                       <X className="w-5 h-5" />
@@ -491,7 +580,9 @@ export default function PurchaseOrders() {
               
               <div className="pt-4 flex justify-end gap-3 border-t border-white/10 mt-6">
                 <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 rounded-xl text-[13px] font-medium text-[#ececec] hover:bg-white/5">Cancel</button>
-                <button type="submit" className="bg-purple-600 hover:bg-purple-500 text-white px-6 py-2 rounded-xl text-[13px] font-medium shadow-[0_0_15px_rgba(168,85,247,0.25)]">Save PO</button>
+                <button type="submit" disabled={creating} className="bg-purple-600 hover:bg-purple-500 disabled:opacity-60 disabled:cursor-not-allowed text-white px-6 py-2 rounded-xl text-[13px] font-medium shadow-[0_0_15px_rgba(168,85,247,0.25)] flex items-center gap-2">
+                  {creating ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</> : 'Save PO'}
+                </button>
               </div>
             </form>
           </div>

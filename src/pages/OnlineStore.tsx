@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Lock, Monitor, Smartphone, Tablet, RefreshCw, Play, Loader2, StopCircle, LayoutTemplate, ExternalLink, Terminal as TerminalIcon, Cpu, Globe, Activity, Code2, Box, Zap, X, Palette, Type, MousePointer2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
+import { apiClient } from '../api/client';
 
 export default function OnlineStore() {
     // ── STATE ──
@@ -16,7 +17,7 @@ export default function OnlineStore() {
     const [activeColor, setActiveColor] = useState('purple');
     const [activeFont, setActiveFont] = useState('Inter');
     
-    const STORE_URL = 'http://localhost:3000'; 
+    const STORE_URL = 'http://localhost:5173'; 
     const terminalRef = useRef<HTMLDivElement>(null);
 
     const deviceWidths = {
@@ -37,64 +38,53 @@ export default function OnlineStore() {
         }
     }, [terminalLogs]);
 
-    const simulateTerminal = () => {
+    const simulateTerminal = (online: boolean | null = null) => {
         setTerminalLogs([]);
-        const logs = [
-            '> dvsk-frontend@1.0.0 dev',
-            '> vite v5.1.4 ready in 320 ms',
-            '',
-            '  ➜  Local:   http://localhost:3000/',
-            '  ➜  Network: use --host to expose',
-            '  ➜  press h + enter to show help',
-            '✓ compiled client and server successfully'
+        const baseLogs = [
+            '> dvsk-storefront@1.0.0',
+            '> probing http://localhost:5173 ...',
         ];
-        
-        logs.forEach((log, index) => {
+        baseLogs.forEach((log, index) => {
             setTimeout(() => addLog(log), index * 400);
         });
+        if (online === true) {
+            setTimeout(() => addLog('  ➜  Local:   http://localhost:5173/'), 1200);
+            setTimeout(() => addLog('✓ storefront reachable · attaching preview'), 1800);
+        } else if (online === false) {
+            setTimeout(() => addLog('> [WARN] storefront did not respond'), 1200);
+            setTimeout(() => addLog('> [HINT] open a terminal in DVSK/ and run: npm run dev'), 1800);
+        }
     };
 
     // ── HANDLERS ──
-       const handleGoLive = async () => {
+    const handleGoLive = async () => {
         setIsStarting(true);
         simulateTerminal();
 
         try {
-            // Get the token from local storage (change 'token' to whatever your app uses, like 'adminToken')
-            const token = localStorage.getItem('token'); 
-            
-            // 1. Call the backend route we created
-            const response = await fetch('http://localhost:5000/api/admin/start-store', { 
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}` 
-                }
-            });
+            const { data } = await apiClient.get('/admin/storefront-status');
+            const online: boolean = !!data?.data?.online;
 
-            const data = await response.json();
-
-            // 2. We wait 3.2 seconds just so your cool terminal animation can finish
             setTimeout(() => {
-                if (data.success) {
-                    setIsLive(true);
-                    setIsStarting(false);
-                    toast.success('Store Engine Online', { icon: '🟢', style: { background: '#111', color: '#fff', border: '1px solid #34d399' } });
-                } else {
-                    // If backend returned an error message
-                    setIsStarting(false);
-                    addLog(`> [ERROR] Backend returned: ${data.message || 'Unknown error'}`);
-                    toast.error(data.message || "Failed to initialize engine.");
-                }
-            }, 3200);
-
-        } catch (error) {
-            // If the backend is turned off completely
+                simulateTerminal(online);
+                setTimeout(() => {
+                    if (online) {
+                        setIsLive(true);
+                        setIsStarting(false);
+                        toast.success('Storefront online · Preview attached', { icon: '🟢', style: { background: '#111', color: '#fff', border: '1px solid #34d399' } });
+                    } else {
+                        setIsStarting(false);
+                        toast.error('Storefront not running. Start it with: cd DVSK && npm run dev');
+                    }
+                }, 2000);
+            }, 1200);
+        } catch (error: any) {
+            const msg = error?.response?.data?.error?.message || error?.response?.data?.message || error?.message || 'Connection failed';
             setTimeout(() => {
                 setIsStarting(false);
-                addLog("> [FATAL] Could not connect to backend on port 5001.");
-                toast.error("Failed to connect to Admin Backend.");
-            }, 3200);
+                addLog(`> [FATAL] ${msg}`);
+                toast.error(`Failed to reach DVSK backend: ${msg}`);
+            }, 1500);
         }
     };
 
@@ -313,7 +303,7 @@ export default function OnlineStore() {
                                 
                                 <div className="mx-auto flex items-center gap-2 bg-[#0a0a0a] border border-white/5 px-4 py-1.5 rounded-lg w-full max-w-sm overflow-hidden">
                                     <Lock className={`w-3 h-3 ${isLive ? 'text-emerald-400' : 'text-[#444]'}`} />
-                                    <span className={`text-[12px] font-mono ${isLive ? 'text-[#aaa]' : 'text-[#444]'}`}>localhost:3000</span>
+                                    <span className={`text-[12px] font-mono ${isLive ? 'text-[#aaa]' : 'text-[#444]'}`}>localhost:5173</span>
                                 </div>
 
                                 <button onClick={handleRefreshPreview} className={`absolute right-4 p-1.5 rounded-lg transition-colors ${isLive ? 'text-[#666] hover:text-white hover:bg-white/5' : 'text-[#333] cursor-not-allowed'}`}>

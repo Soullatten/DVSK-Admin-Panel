@@ -4,8 +4,11 @@ import {
   Printer, Download, Filter, GitBranch, ArrowRightLeft, Route
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { useMainWebsite } from '../hooks/useMainWebsite';
+import type { Socket } from 'socket.io-client';
 import { motion, AnimatePresence } from 'framer-motion';
+import { orderService } from '../api/orderService';
+import type { StatsPeriod } from '../api/orderService';
+import { connectLiveFeed } from '../lib/liveSocket';
 
 const W = 1600;
 const H = 380;
@@ -17,17 +20,15 @@ type HoverState = { visible: boolean; cursorX: number; cursorY: number; pointX: 
 type MetricType = 'Sessions' | 'Sales' | 'Orders';
 
 export default function Attribution() {
-  const { data: liveData } = useMainWebsite('/attribution');
-  
   // UI States
   const [showBanner, setShowBanner] = useState(true);
   const [activeTab, setActiveTab] = useState<'Overview' | 'Conversion Paths' | 'Model Comparison'>('Overview');
-  const [activeMetric, setActiveMetric] = useState<MetricType>('Sessions');
-  
+  const [activeMetric, setActiveMetric] = useState<MetricType>('Orders');
+
   // Dropdown States
   const [isDateDropOpen, setIsDateDropOpen] = useState(false);
   const [dateRange, setDateRange] = useState('Last 30 days');
-  
+
   const [isModelDropOpen, setIsModelDropOpen] = useState(false);
   const [attrModel, setAttrModel] = useState('Last non-direct click');
 
@@ -35,27 +36,59 @@ export default function Attribution() {
 
   const chartRef = useRef<HTMLDivElement | null>(null);
 
-  // 1. DYNAMIC DATA GENERATION (Flatline based on current date range)
-  const daysCount = dateRange === 'Last 7 days' ? 7 : dateRange === 'Last 30 days' ? 30 : 90;
-  
-  const dynamicChartData = useMemo(() => {
-    const data = [];
-    const today = new Date();
-    for (let i = daysCount; i >= 0; i--) {
-      const d = new Date(today);
-      d.setDate(d.getDate() - i);
-      data.push({
-        label: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-        date: d.toISOString(),
-        value: 0 // Flat line
-      });
-    }
-    return data;
-  }, [daysCount]);
+  // 1. REAL DATA from /orders/admin/stats
+  const [daily, setDaily] = useState<{ date: string; count: number; revenue: number }[]>([]);
 
-  // 2. DYNAMIC SCALING & FORMATTING
-  const maxVal = 2; // Fixed max for a flatline
-  const formatValue = (val: number) => activeMetric === 'Sales' ? `₹${val.toFixed(2)}` : val.toString();
+  const fetchStats = async () => {
+    try {
+      const period: StatsPeriod =
+        dateRange === 'Last 7 days' ? 'Last 7 days'
+        : dateRange === 'Last 90 days' ? 'Last 90 days'
+        : 'Last 30 days';
+      const stats = await orderService.stats(period);
+      setDaily(stats.daily ?? []);
+    } catch (err) {
+      console.error('[Attribution] failed to load stats', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchStats();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateRange]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let socket: Socket | null = null;
+    (async () => {
+      socket = await connectLiveFeed();
+      if (cancelled) {
+        socket.disconnect();
+        return;
+      }
+      socket.on('order:placed', fetchStats);
+    })();
+    return () => {
+      cancelled = true;
+      socket?.disconnect();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateRange]);
+
+  const dynamicChartData = useMemo(() => {
+    return daily.map(d => ({
+      label: new Date(d.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      date: d.date,
+      value: activeMetric === 'Sales' ? d.revenue : d.count,
+    }));
+  }, [daily, activeMetric]);
+
+  // 2. DYNAMIC SCALING & FORMATTING (auto-scale to data)
+  const maxVal = useMemo(() => {
+    const max = dynamicChartData.reduce((m, d) => Math.max(m, d.value), 0);
+    return max > 0 ? max * 1.2 : 2;
+  }, [dynamicChartData]);
+  const formatValue = (val: number) => activeMetric === 'Sales' ? `₹${val.toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : Math.round(val).toString();
 
   const getX = (index: number, total: number) => PADDING_LEFT + (index / (total - 1)) * (W - PADDING_LEFT - PADDING_RIGHT);
   const getY = (value: number) => H - (value / maxVal) * H;

@@ -2,6 +2,9 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Search, ChevronDown, ChevronLeft, ChevronRight, FileText, Plus, Bell, Info, ExternalLink, Zap, Filter, X, Download, Trash2, BarChart3, ArrowUpRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
+import type { Socket } from 'socket.io-client';
+import { apiClient } from '../api/client';
+import { connectLiveFeed } from '../lib/liveSocket';
 
 // --- Custom Animated Neon Checkbox ---
 const GlowingCheckbox = ({ checked, onChange, id }: { checked: boolean, onChange: () => void, id: string }) => (
@@ -37,20 +40,20 @@ const GlowingCheckbox = ({ checked, onChange, id }: { checked: boolean, onChange
     </div>
 );
 
-// --- Initial Data ---
-const initialReports = [
-    { name: 'Items ordered over time', category: 'Orders', lastViewed: 'Apr 17, 2026', views: 142 },
-    { name: 'Sessions by location', category: 'Acquisition', lastViewed: 'Just now', views: 890 },
-    { name: 'Sessions by referrer', category: 'Acquisition', lastViewed: '2 days ago', views: 34 },
-    { name: 'Sessions by social referrer', category: 'Acquisition', lastViewed: '', link: true, views: 0 },
-    { name: 'Conversion rate breakdown', category: 'Behavior', lastViewed: 'Apr 15, 2026', views: 512 },
-    { name: 'Customer cohort analysis', category: 'Customers', lastViewed: '', views: 12 },
-    { name: 'New vs returning customers', category: 'Customers', lastViewed: 'Apr 10, 2026', views: 45 },
-    { name: 'Predicted spend tiers', category: 'Customers', lastViewed: '', info: true, bell: true, views: 88 },
-    { name: 'Finance Summary', category: 'Finances', lastViewed: 'Yesterday', views: 1024 },
-    { name: 'Gross profit breakdown', category: 'Finances', lastViewed: '', views: 5 },
-    { name: 'Net sales by order', category: 'Finances', lastViewed: '', views: 0 },
-];
+// --- Initial Data: hydrated from /admin/reports ---
+type ReportRow = {
+  id?: string;
+  name: string;
+  category: string;
+  lastViewed: string;
+  views: number;
+  value?: string;
+  sub?: string;
+  info?: boolean;
+  bell?: boolean;
+  link?: boolean;
+};
+const initialReports: ReportRow[] = [];
 
 const categories = ['All Categories', 'Orders', 'Acquisition', 'Behavior', 'Customers', 'Finances'];
 
@@ -73,6 +76,47 @@ function SystemIcon() {
 export default function Reports() {
     // --- Application State ---
     const [reports, setReports] = useState(initialReports);
+
+    const fetchReports = async () => {
+      try {
+        const res = await apiClient.get('/admin/reports');
+        const items = res.data?.data ?? [];
+        if (Array.isArray(items)) {
+          setReports(items.map((r: any) => ({
+            id: r.id,
+            name: r.name,
+            category: r.category,
+            lastViewed: r.lastViewed,
+            views: r.views || 0,
+            value: r.value,
+            sub: r.sub,
+          })));
+        }
+      } catch (err) {
+        console.error('[Reports] failed to load:', err);
+      }
+    };
+
+    useEffect(() => {
+      fetchReports();
+    }, []);
+
+    useEffect(() => {
+      let cancelled = false;
+      let socket: Socket | null = null;
+      (async () => {
+        socket = await connectLiveFeed();
+        if (cancelled) {
+          socket.disconnect();
+          return;
+        }
+        socket.on('order:placed', fetchReports);
+      })();
+      return () => {
+        cancelled = true;
+        socket?.disconnect();
+      };
+    }, []);
     const [search, setSearch] = useState('');
     const [page, setPage] = useState(1);
     const [selectedCategory, setSelectedCategory] = useState('All Categories');

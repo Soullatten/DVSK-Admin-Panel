@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Megaphone, 
   Search, 
@@ -21,7 +21,8 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { useMainWebsite } from '../hooks/useMainWebsite';
+import { campaignsApi } from '../api/marketingService';
+import { useAdminDataRefresh } from '../lib/useAdminDataRefresh';
 
 // ── CUSTOM BRAND ICONS (To guarantee no import errors) ──
 const InstagramIcon = ({ className }: { className?: string }) => (
@@ -53,15 +54,6 @@ interface Campaign {
   conversions: number;
 }
 
-const DEMO_CAMPAIGNS: Campaign[] = [
-  { id: 'CMP-1', name: 'Summer Essentials Drop', platform: 'Instagram Ads', status: 'Active', spend: 1250, revenue: 5420, clicks: 3420, conversions: 112 },
-  { id: 'CMP-2', name: 'Retargeting - Cart Abandoners', platform: 'Email', status: 'Active', spend: 0, revenue: 2140, clicks: 850, conversions: 45 },
-  { id: 'CMP-3', name: 'UGC Viral Push', platform: 'TikTok Ads', status: 'Paused', spend: 800, revenue: 1100, clicks: 5200, conversions: 28 },
-  { id: 'CMP-4', name: 'Search Brand Terms', platform: 'Google Ads', status: 'Active', spend: 320, revenue: 2890, clicks: 1120, conversions: 64 },
-  { id: 'CMP-5', name: 'Lookalike Audience (1%)', platform: 'Facebook Ads', status: 'Active', spend: 650, revenue: 1850, clicks: 2100, conversions: 38 },
-  { id: 'CMP-6', name: 'Vlog Sponsorship Pre-roll', platform: 'YouTube Ads', status: 'Active', spend: 1500, revenue: 3200, clicks: 1400, conversions: 75 },
-];
-
 const PLATFORM_ICONS: Record<Platform, { icon: React.ReactNode, color: string }> = {
   'Instagram Ads': { icon: <InstagramIcon className="w-4 h-4" />, color: 'text-pink-500' },
   'Facebook Ads': { icon: <FacebookIcon className="w-4 h-4" />, color: 'text-blue-500' },
@@ -75,11 +67,41 @@ const PLATFORM_ICONS: Record<Platform, { icon: React.ReactNode, color: string }>
   'SMS': { icon: <MessageSquare className="w-4 h-4" />, color: 'text-green-400' },
 };
 
+const STATUS_FROM_API: Record<string, Campaign['status']> = {
+  ACTIVE: 'Active', PAUSED: 'Paused', DRAFT: 'Draft',
+};
+const STATUS_TO_API: Record<Campaign['status'], string> = {
+  Active: 'ACTIVE', Paused: 'PAUSED', Draft: 'DRAFT',
+};
+
+const apiToCampaign = (a: any): Campaign => ({
+  id: a.id,
+  name: a.name,
+  platform: a.platform,
+  status: STATUS_FROM_API[a.status] ?? 'Draft',
+  spend: Number(a.spend) || 0,
+  revenue: Number(a.revenue) || 0,
+  clicks: a.clicks || 0,
+  conversions: a.conversions || 0,
+});
+
 export default function Campaigns() {
-  const { data: liveData } = useMainWebsite('/campaigns');
-  
-  // State
-  const [campaigns, setCampaigns] = useState<Campaign[]>(DEMO_CAMPAIGNS);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+
+  const refresh = async () => {
+    try {
+      const list = await campaignsApi.list();
+      setCampaigns(list.map(apiToCampaign));
+    } catch (err) {
+      console.error('[Campaigns] failed to load', err);
+    }
+  };
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  useAdminDataRefresh('campaigns', refresh);
   const [searchQuery, setSearchQuery] = useState('');
   const [activePlatformFilter, setActivePlatformFilter] = useState<Platform | 'All'>('All');
   
@@ -105,47 +127,50 @@ export default function Campaigns() {
 
   // ── Handlers ──
 
-  const handleCreateCampaign = (e: React.FormEvent) => {
+  const handleCreateCampaign = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCampaign.name) return toast.error('Please enter a campaign name.');
-
-    const campaign: Campaign = {
-      id: `CMP-${Math.floor(Math.random() * 900) + 100}`,
-      name: newCampaign.name,
-      platform: newCampaign.platform,
-      status: 'Draft',
-      spend: 0,
-      revenue: 0,
-      clicks: 0,
-      conversions: 0
-    };
-
-    setCampaigns([campaign, ...campaigns]);
-    setIsCreateModalOpen(false);
-    setNewCampaign({ name: '', platform: 'Instagram Ads', budget: '' });
-    toast.success('Campaign created successfully! Ready to launch.');
-  };
-
-  const toggleCampaignStatus = (e: React.MouseEvent, id: string) => {
-    e.stopPropagation();
-    setCampaigns(campaigns.map(c => {
-      if (c.id === id) {
-        const newStatus = c.status === 'Active' ? 'Paused' : 'Active';
-        toast.success(`${c.name} is now ${newStatus}.`);
-        return { ...c, status: newStatus };
-      }
-      return c;
-    }));
-    
-    if (viewingCampaign?.id === id) {
-      setViewingCampaign({ ...viewingCampaign, status: viewingCampaign.status === 'Active' ? 'Paused' : 'Active' });
+    try {
+      const created = await campaignsApi.create({
+        name: newCampaign.name,
+        platform: newCampaign.platform,
+        status: 'DRAFT',
+        spend: Number(newCampaign.budget) || 0,
+      });
+      setCampaigns(prev => [apiToCampaign(created), ...prev]);
+      setIsCreateModalOpen(false);
+      setNewCampaign({ name: '', platform: 'Instagram Ads', budget: '' });
+      toast.success('Campaign created successfully!');
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error?.message || 'Failed to create campaign');
     }
   };
 
-  const deleteCampaign = (id: string) => {
-    setCampaigns(campaigns.filter(c => c.id !== id));
-    setViewingCampaign(null);
-    toast.success('Campaign deleted.');
+  const toggleCampaignStatus = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    const current = campaigns.find(c => c.id === id);
+    if (!current) return;
+    const next: Campaign['status'] = current.status === 'Active' ? 'Paused' : 'Active';
+    try {
+      const updated = await campaignsApi.update(id, { status: STATUS_TO_API[next] });
+      const view = apiToCampaign(updated);
+      setCampaigns(prev => prev.map(c => (c.id === id ? view : c)));
+      if (viewingCampaign?.id === id) setViewingCampaign(view);
+      toast.success(`${view.name} is now ${view.status}.`);
+    } catch {
+      toast.error('Failed to update status');
+    }
+  };
+
+  const deleteCampaign = async (id: string) => {
+    try {
+      await campaignsApi.remove(id);
+      setCampaigns(prev => prev.filter(c => c.id !== id));
+      setViewingCampaign(null);
+      toast.success('Campaign deleted.');
+    } catch {
+      toast.error('Failed to delete campaign');
+    }
   };
 
   return (

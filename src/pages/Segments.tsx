@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Users2, 
   Search, 
@@ -18,7 +18,9 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { useMainWebsite } from '../hooks/useMainWebsite';
+import type { Socket } from 'socket.io-client';
+import { apiClient } from '../api/client';
+import { connectLiveFeed } from '../lib/liveSocket';
 
 // ── Types & Demo Data ──
 interface SegmentItem {
@@ -32,27 +34,43 @@ interface SegmentItem {
   logicRule: string;
 }
 
-const TOTAL_STORE_CUSTOMERS = 1420;
-
-const DEMO_SEGMENTS: SegmentItem[] = [
-  { id: 'SEG-1', name: 'Purchased at least once', customerCount: 845, totalCustomers: TOTAL_STORE_CUSTOMERS, lastActivity: 'Updated 2 hrs ago', createdBy: 'System', isSystem: true, logicRule: 'Order Count > 0' },
-  { id: 'SEG-2', name: 'Email subscribers', customerCount: 1120, totalCustomers: TOTAL_STORE_CUSTOMERS, lastActivity: 'Updated 5 hrs ago', createdBy: 'System', isSystem: true, logicRule: 'Accepts Marketing = True' },
-  { id: 'SEG-3', name: 'Abandoned checkouts (30 days)', customerCount: 156, totalCustomers: TOTAL_STORE_CUSTOMERS, lastActivity: 'Updated 1 day ago', createdBy: 'System', isSystem: true, logicRule: 'Abandoned Cart = True AND Days < 30' },
-  { id: 'SEG-4', name: 'VIPs (Spent > $500)', customerCount: 89, totalCustomers: TOTAL_STORE_CUSTOMERS, lastActivity: 'Updated 3 days ago', createdBy: 'Alex Admin', isSystem: false, logicRule: 'Total Spent > $500' },
-];
-
-const DEMO_CUSTOMERS_IN_SEGMENT = [
-  { id: 'C1', name: 'Alex Carter', email: 'alex@example.com', spent: 1240.50, orders: 12 },
-  { id: 'C2', name: 'Sarah Jenkins', email: 'sarah.j@example.com', spent: 650.00, orders: 5 },
-  { id: 'C3', name: 'Mike Ross', email: 'mross@company.com', spent: 890.20, orders: 8 },
-  { id: 'C4', name: 'Jessica Day', email: 'jess@lawfirm.com', spent: 510.00, orders: 3 },
-  { id: 'C5', name: 'Harvey Specter', email: 'harvey@pearson.com', spent: 2200.00, orders: 15 },
-];
+const TOTAL_STORE_CUSTOMERS = 0;
 
 export default function Segments() {
-  const { data: liveData } = useMainWebsite('/segments');
-  
-  const [segments, setSegments] = useState<SegmentItem[]>(liveData && liveData.length > 0 ? liveData : DEMO_SEGMENTS);
+  const [segments, setSegments] = useState<SegmentItem[]>([]);
+
+  const fetchSegments = async () => {
+    try {
+      const res = await apiClient.get('/admin/segments');
+      const items = res.data?.data ?? [];
+      setSegments(Array.isArray(items) ? items : []);
+    } catch (err) {
+      console.error('[Segments] failed to load:', err);
+      setSegments([]);
+    }
+  };
+
+  useEffect(() => {
+    fetchSegments();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let socket: Socket | null = null;
+    (async () => {
+      socket = await connectLiveFeed();
+      if (cancelled) {
+        socket.disconnect();
+        return;
+      }
+      socket.on('order:placed', fetchSegments);
+      socket.on('visitor:join', fetchSegments);
+    })();
+    return () => {
+      cancelled = true;
+      socket?.disconnect();
+    };
+  }, []);
   const [searchQuery, setSearchQuery] = useState('');
   
   // Builder Modal State
@@ -356,25 +374,11 @@ export default function Segments() {
               </div>
 
               <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
-                <h3 className="text-[13px] font-bold text-white mb-4 uppercase tracking-wider">Preview (Showing top 5 of {viewingSegment.customerCount})</h3>
+                <h3 className="text-[13px] font-bold text-white mb-4 uppercase tracking-wider">Preview ({viewingSegment.customerCount} customers in segment)</h3>
                 <div className="space-y-3">
-                  {DEMO_CUSTOMERS_IN_SEGMENT.map(cust => (
-                    <div key={cust.id} className="bg-white/5 border border-white/10 rounded-xl p-4 flex items-center justify-between hover:bg-white/10 transition-colors cursor-pointer">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold text-[12px]">
-                          {cust.name.split(' ').map(n => n[0]).join('')}
-                        </div>
-                        <div>
-                          <div className="text-[14px] font-bold text-white">{cust.name}</div>
-                          <div className="text-[11px] text-[#888]">{cust.email}</div>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-[13px] font-bold text-emerald-400">${cust.spent.toFixed(2)}</div>
-                        <div className="text-[11px] text-[#666] flex items-center justify-end gap-1"><ShoppingBag className="w-3 h-3"/> {cust.orders} orders</div>
-                      </div>
-                    </div>
-                  ))}
+                  <div className="bg-white/5 border border-white/10 rounded-xl p-6 text-center text-[13px] text-[#888]">
+                    No customer data yet. Customers will appear here once they match this segment's rule.
+                  </div>
                 </div>
                 
                 {/* ACTIVATED THIS BUTTON! */}

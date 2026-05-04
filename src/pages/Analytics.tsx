@@ -2,6 +2,21 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { BarChart2, Calendar, ChevronDown, RefreshCw, MoreHorizontal, Info, Check, Download, Loader2, ArrowRight, Settings, FileText } from 'lucide-react';
 import { motion, AnimatePresence, useMotionValue, useSpring } from 'framer-motion';
 import toast from 'react-hot-toast';
+import type { Socket } from 'socket.io-client';
+import { apiClient } from '../api/client';
+import { connectLiveFeed } from '../lib/liveSocket';
+import { orderService, type OrderStatsSummary, type StatsPeriod } from '../api/orderService';
+
+type DashboardStats = {
+  totalUsers: number;
+  totalOrders: number;
+  monthlyOrders: number;
+  totalRevenue: number;
+  monthlyRevenue: number;
+  lastMonthRevenue: number;
+  pendingOrders: number;
+  lowStockCount: number;
+};
 
 // --- Configuration & Helpers ---
 const CURRENCIES = [
@@ -31,22 +46,90 @@ export default function Analytics() {
   const [reportState, setReportState] = useState<'idle' | 'loading'>('idle');
   const [showInfo, setShowInfo] = useState(false);
 
-  // --- Dynamic Data Engine (ZERO STATE) ---
+  // --- Live dashboard stats from main backend ---
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [periodStats, setPeriodStats] = useState<OrderStatsSummary | null>(null);
+
+  const periodForBackend: StatsPeriod = useMemo(() => {
+    if (dateRange === 'Today' || dateRange === 'Yesterday') return 'Today';
+    if (dateRange === 'Last 7 days') return 'Last 7 days';
+    return 'Last 30 days';
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateRange]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const [dashRes, period] = await Promise.all([
+          apiClient.get('/admin/dashboard'),
+          orderService.stats(periodForBackend),
+        ]);
+        const data = dashRes.data?.data ?? dashRes.data;
+        if (!cancelled) {
+          if (data) setStats(data);
+          setPeriodStats(period);
+        }
+      } catch {
+        if (!cancelled) {
+          setStats(null);
+          setPeriodStats(null);
+        }
+      }
+    };
+    load();
+
+    let socket: Socket | null = null;
+    (async () => {
+      socket = await connectLiveFeed();
+      if (cancelled) {
+        socket.disconnect();
+        return;
+      }
+      socket.on('order:placed', () => {
+        load();
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+      socket?.disconnect();
+    };
+  }, [dateRange, periodForBackend]);
+
+  const pctChange = (now: number, prev: number) => {
+    if (!prev) return now > 0 ? '+100%' : '0%';
+    const diff = ((now - prev) / prev) * 100;
+    const sign = diff >= 0 ? '+' : '';
+    return `${sign}${diff.toFixed(1)}%`;
+  };
+
+  // Use the period-scoped stats for the breakdown / chart, dashboard stats for the headline KPI deltas
+  const grossSales = periodStats?.totalSubtotal ?? periodStats?.totalRevenue ?? stats?.monthlyRevenue ?? 0;
+  const discounts = periodStats?.totalDiscount ?? 0;
+  const shipping = periodStats?.totalShipping ?? 0;
+  const taxes = periodStats?.totalTax ?? 0;
+  const netSales = periodStats?.netSales ?? grossSales - discounts;
+  const totalSales = periodStats?.totalRevenue ?? grossSales;
+  const ordersTotal = periodStats?.totalOrders ?? stats?.monthlyOrders ?? 0;
+  const ordersFulfilled = Math.max(0, ordersTotal - (stats?.pendingOrders ?? 0));
+  const revenueChange = pctChange(stats?.monthlyRevenue ?? 0, stats?.lastMonthRevenue ?? 0);
+
   const statCards = [
-    { label: 'Gross sales', value: 0, change: '0%', type: 'currency' },
+    { label: 'Gross sales', value: grossSales, change: revenueChange, type: 'currency' },
     { label: 'Returning customer rate', value: 0, change: '0%', type: 'percentage' },
-    { label: 'Orders fulfilled', value: 0, change: '0%', type: 'number' },
-    { label: 'Orders', value: 0, change: '0%', type: 'number' },
+    { label: 'Orders fulfilled', value: ordersFulfilled, change: revenueChange, type: 'number' },
+    { label: 'Orders', value: ordersTotal, change: revenueChange, type: 'number' },
   ];
 
   const salesBreakdown = [
-    { label: 'Gross sales', value: 0 },
-    { label: 'Discounts', value: 0 },
+    { label: 'Gross sales', value: grossSales },
+    { label: 'Discounts', value: -discounts },
     { label: 'Returns', value: 0 },
-    { label: 'Net sales', value: 0 },
-    { label: 'Shipping charges', value: 0 },
-    { label: 'Taxes', value: 0 },
-    { label: 'Total sales', value: 0, isTotal: true },
+    { label: 'Net sales', value: netSales },
+    { label: 'Shipping charges', value: shipping },
+    { label: 'Taxes', value: taxes },
+    { label: 'Total sales', value: totalSales, isTotal: true },
   ];
 
   // --- Handlers ---
@@ -87,21 +170,21 @@ Exported On  : ${new Date().toLocaleString()}
 
 KEY METRICS
 --------------------------------------------------
-Gross Sales            : ${formatMoney(0, currency)}
+Gross Sales            : ${formatMoney(grossSales, currency)}
 Returning Cust. Rate   : 0%
-Orders Fulfilled       : 0
-Total Orders           : 0
+Orders Fulfilled       : ${ordersFulfilled}
+Total Orders           : ${ordersTotal}
 
 SALES BREAKDOWN
 --------------------------------------------------
-Gross Sales            : ${formatMoney(0, currency)}
+Gross Sales            : ${formatMoney(grossSales, currency)}
 Discounts              : ${formatMoney(0, currency)}
 Returns                : ${formatMoney(0, currency)}
-Net Sales              : ${formatMoney(0, currency)}
+Net Sales              : ${formatMoney(grossSales, currency)}
 Shipping Charges       : ${formatMoney(0, currency)}
 Taxes                  : ${formatMoney(0, currency)}
 --------------------------------------------------
-TOTAL SALES            : ${formatMoney(0, currency)}
+TOTAL SALES            : ${formatMoney(grossSales, currency)}
 
 ==================================================
           Generated by DVSK Admin Portal
@@ -155,26 +238,36 @@ TOTAL SALES            : ${formatMoney(0, currency)}
 
     const H = 220; const W = 800;
     
-    // Generate Labels
-    const labels = useMemo(() => {
-      if (dateRange === 'Last 7 days') return ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-      if (dateRange === 'Last 30 days') return ['1st', '5th', '10th', '15th', '20th', '25th', '30th'];
-      return ['12 AM', '3 AM', '6 AM', '9 AM', '12 PM', '3 PM', '6 PM', '9 PM'];
-    }, [dateRange]);
-
     const currentCard = statCards.find(c => c.label === activeMetric);
-    
-    // Generate data points (Flatline at 0)
-    const dataPoints = useMemo(() => {
-      return labels.map((label, i) => ({
-        label,
-        val: 0, // ALWAYS ZERO in this state
-        x: (i / (labels.length - 1)) * W,
-      }));
-    }, [labels]);
 
-    // Calculate Y-Axis scale based on the metric type
-    const maxVal = currentCard?.type === 'percentage' ? 100 : 10; 
+    // Real daily data from backend (revenue or count) — falls back to a 7-day flatline if not loaded yet
+    const dailySource = periodStats?.daily ?? [];
+    const dataPoints = useMemo(() => {
+      if (dailySource.length === 0) {
+        const stub = ['', '', '', '', '', '', ''];
+        return stub.map((_, i) => ({
+          label: '',
+          val: 0,
+          x: (i / (stub.length - 1)) * W,
+        }));
+      }
+      return dailySource.map((d, i) => {
+        const date = new Date(d.date);
+        const label = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        let val = 0;
+        if (currentCard?.label === 'Orders') val = d.count;
+        else val = d.revenue;
+        return {
+          label,
+          val,
+          x: dailySource.length === 1 ? W / 2 : (i / (dailySource.length - 1)) * W,
+        };
+      });
+    }, [dailySource, currentCard]);
+
+    // Calculate Y-Axis scale dynamically based on real max
+    const dataMax = Math.max(0, ...dataPoints.map((d) => d.val));
+    const maxVal = currentCard?.type === 'percentage' ? 100 : (dataMax > 0 ? dataMax * 1.2 : 10);
 
     // Handle mouse movement for physics tooltip
     const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -203,16 +296,19 @@ TOTAL SALES            : ${formatMoney(0, currency)}
       return val.toString();
     };
 
-    // Build perfect flatline path
+    // Build smooth bezier path that responds to real data points
+    const yFor = (val: number) => H - (val / Math.max(maxVal, 1)) * (H - 16) - 8;
     const buildPath = (points: typeof dataPoints) => {
       if (!points.length) return '';
-      let path = `M ${points[0].x} ${H}`;
+      let path = `M ${points[0].x} ${yFor(points[0].val)}`;
       for (let i = 0; i < points.length - 1; i++) {
         const curr = points[i];
         const next = points[i + 1];
         const cp1x = curr.x + (next.x - curr.x) / 2;
+        const cp1y = yFor(curr.val);
         const cp2x = curr.x + (next.x - curr.x) / 2;
-        path += ` C ${cp1x} ${H}, ${cp2x} ${H}, ${next.x} ${H}`;
+        const cp2y = yFor(next.val);
+        path += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${next.x} ${yFor(next.val)}`;
       }
       return path;
     };
@@ -317,7 +413,12 @@ TOTAL SALES            : ${formatMoney(0, currency)}
           </AnimatePresence>
 
           <div className="absolute bottom-[-20px] left-[40px] right-0 flex justify-between text-[11px] font-bold text-[#666]">
-            {labels.map((t) => <span key={t}>{t}</span>)}
+            {dataPoints.map((p, i) => {
+              // Show every Nth label so we don't crowd the axis
+              const stride = Math.max(1, Math.floor(dataPoints.length / 7));
+              if (i % stride !== 0 && i !== dataPoints.length - 1) return <span key={i}>&nbsp;</span>;
+              return <span key={i}>{p.label}</span>;
+            })}
           </div>
         </div>
       </div>

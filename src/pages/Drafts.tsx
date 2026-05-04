@@ -12,7 +12,9 @@ import {
   ChevronDown
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { useMainWebsite } from '../hooks/useMainWebsite';
+import type { Socket } from 'socket.io-client';
+import { apiClient } from '../api/client';
+import { connectLiveFeed } from '../lib/liveSocket';
 
 // ── Types ──
 type DraftStatus = 'Open' | 'Invoice sent' | 'Completed';
@@ -25,17 +27,9 @@ interface DraftOrder {
   total: string;
 }
 
-// Initial State Data
-const initialDrafts: DraftOrder[] = [
-  { id: '#D1029', date: 'Today at 2:15 PM', customer: 'Alice Cooper', status: 'Open', total: '₹1,200.00' },
-  { id: '#D1028', date: 'Today at 11:30 AM', customer: 'Robert Fox', status: 'Invoice sent', total: '₹8,500.00' },
-  { id: '#D1027', date: 'Yesterday at 4:20 PM', customer: 'Emma Watson', status: 'Completed', total: '₹3,400.00' },
-  { id: '#D1026', date: 'Oct 14 at 9:00 AM', customer: 'David Miller', status: 'Open', total: '₹450.00' },
-];
-
 export default function Drafts() {
   // ── State Management ──
-  const [drafts, setDrafts] = useState<DraftOrder[]>(initialDrafts);
+  const [drafts, setDrafts] = useState<DraftOrder[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   
   // Filter Dropdown State
@@ -54,22 +48,52 @@ export default function Drafts() {
   // Custom Select Dropdown State inside Modal
   const [isStatusSelectOpen, setIsStatusSelectOpen] = useState(false);
 
-  // Real backend connection hook
-  const { data: liveData, loading: liveLoading } = useMainWebsite('/drafts');
+  const [liveLoading, setLiveLoading] = useState(true);
 
-  // Sync live data if available
-  useEffect(() => {
-    if (liveData && Array.isArray(liveData) && liveData.length > 0) {
-      const mapped = liveData.map((item: any) => ({
-        id: item.id || item.draftNumber || `#D${Math.floor(Math.random() * 9000) + 1000}`,
-        date: item.createdAt ? new Date(item.createdAt).toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Just now',
-        customer: item.User?.name || item.customerName || 'Guest',
-        status: item.status || 'Open',
-        total: item.total ? `₹${Number(item.total).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '₹0.00',
+  const fetchDrafts = async () => {
+    setLiveLoading(true);
+    try {
+      const res = await apiClient.get('/admin/drafts');
+      const items = res.data?.data ?? [];
+      const mapped = (Array.isArray(items) ? items : []).map((item: any) => ({
+        id: `#${item.id}`,
+        date: item.createdAt
+          ? new Date(item.createdAt).toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+          : 'Just now',
+        customer: item.customerName || 'Guest',
+        status: (item.status || 'Open') as DraftStatus,
+        total: `₹${Number(item.total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
       }));
       setDrafts(mapped);
+    } catch (err) {
+      console.error('[Drafts] failed to load:', err);
+      setDrafts([]);
+    } finally {
+      setLiveLoading(false);
     }
-  }, [liveData]);
+  };
+
+  useEffect(() => {
+    fetchDrafts();
+  }, []);
+
+  // Live refresh on every order placed
+  useEffect(() => {
+    let cancelled = false;
+    let socket: Socket | null = null;
+    (async () => {
+      socket = await connectLiveFeed();
+      if (cancelled) {
+        socket.disconnect();
+        return;
+      }
+      socket.on('order:placed', fetchDrafts);
+    })();
+    return () => {
+      cancelled = true;
+      socket?.disconnect();
+    };
+  }, []);
 
   // Close dropdowns when clicking outside
   useEffect(() => {

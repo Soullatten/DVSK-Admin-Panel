@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { BookOpen, Download, Upload, Plus, Globe, Check, MoreVertical, Search, FileEdit, Trash2, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { useMainWebsite } from '../hooks/useMainWebsite';
+import { catalogsApi } from '../api/marketingService';
+import { useAdminDataRefresh } from '../lib/useAdminDataRefresh';
 
 // ── INTERACTIVE ANIMATED ILLUSTRATION ──
 function CatalogIllustration() {
@@ -48,12 +49,30 @@ function CatalogIllustration() {
     );
 }
 
-export default function Catalogs() {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { data: liveData, loading: liveLoading, error: liveError, viewOnMainWebsite } = useMainWebsite('/catalogs');
+const apiToCatalog = (a: any) => ({
+    id: a.id,
+    name: a.name,
+    region: a.region || 'Global',
+    products: a.productCount || 0,
+    status: a.status === 'ACTIVE' ? 'Active' : a.status === 'INACTIVE' ? 'Inactive' : 'Draft',
+});
 
+export default function Catalogs() {
     // ── APPLICATION STATE ──
     const [catalogs, setCatalogs] = useState<{ id: string, name: string, region: string, products: number, status: string }[]>([]);
+
+    const refresh = async () => {
+        try {
+            const list = await catalogsApi.list();
+            setCatalogs(list.map(apiToCatalog));
+        } catch (err) {
+            console.error('[Catalogs] failed to load', err);
+        }
+    };
+
+    useEffect(() => { refresh(); }, []);
+
+    useAdminDataRefresh('catalogs', refresh);
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [newCatalogName, setNewCatalogName] = useState('');
     const [newCatalogRegion, setNewCatalogRegion] = useState('Global');
@@ -72,30 +91,35 @@ export default function Catalogs() {
     // ── HANDLERS ──
 
     // 1. Create Catalog
-    const handleCreateCatalog = (e: React.FormEvent) => {
+    const handleCreateCatalog = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!newCatalogName.trim()) return toast.error('Catalog name is required');
-        
-        const newCat = {
-            id: Math.random().toString(36).substr(2, 9),
-            name: newCatalogName,
-            region: newCatalogRegion,
-            products: 0,
-            status: 'Draft'
-        };
-        
-        setCatalogs([newCat, ...catalogs]);
-        setIsCreateModalOpen(false);
-        setNewCatalogName('');
-        toast.success('Catalog created successfully', { icon: '✨' });
+        try {
+            const created = await catalogsApi.create({
+                name: newCatalogName,
+                region: newCatalogRegion,
+                status: 'DRAFT',
+            });
+            setCatalogs(prev => [apiToCatalog(created), ...prev]);
+            setIsCreateModalOpen(false);
+            setNewCatalogName('');
+            toast.success('Catalog created successfully', { icon: '✨' });
+        } catch (err: any) {
+            toast.error(err?.response?.data?.error?.message || 'Failed to create catalog');
+        }
     };
 
     // 2. Delete Catalog
-    const handleDelete = (id: string, e: React.MouseEvent) => {
+    const handleDelete = async (id: string, e: React.MouseEvent) => {
         e.stopPropagation();
-        setCatalogs(catalogs.filter(c => c.id !== id));
-        setActiveDropdown(null);
-        toast.success('Catalog deleted');
+        try {
+            await catalogsApi.remove(id);
+            setCatalogs(prev => prev.filter(c => c.id !== id));
+            setActiveDropdown(null);
+            toast.success('Catalog deleted');
+        } catch {
+            toast.error('Failed to delete catalog');
+        }
     };
 
     // 3. REAL EXPORT (Generates CSV and Downloads)
@@ -133,26 +157,25 @@ export default function Catalogs() {
         }
     };
 
-    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
 
-        // Simulate parsing the file and creating a catalog from it
         const fileNameWithoutExt = file.name.split('.')[0].replace(/[-_]/g, ' ');
         const capitalizedName = fileNameWithoutExt.charAt(0).toUpperCase() + fileNameWithoutExt.slice(1);
 
-        const importedCat = {
-            id: Math.random().toString(36).substr(2, 9),
-            name: `Imported: ${capitalizedName}`,
-            region: 'Global',
-            products: Math.floor(Math.random() * 250) + 15, // Fake parsed product count
-            status: 'Active'
-        };
+        try {
+            const created = await catalogsApi.create({
+                name: `Imported: ${capitalizedName}`,
+                region: 'Global',
+                status: 'ACTIVE',
+            });
+            setCatalogs(prev => [apiToCatalog(created), ...prev]);
+            toast.success(`Successfully imported data from ${file.name}`, { icon: '📂' });
+        } catch (err: any) {
+            toast.error(err?.response?.data?.error?.message || 'Failed to import');
+        }
 
-        setCatalogs(prev => [importedCat, ...prev]);
-        toast.success(`Successfully imported data from ${file.name}`, { icon: '📂' });
-
-        // Reset input so the same file can be selected again if needed
         e.target.value = '';
     };
 

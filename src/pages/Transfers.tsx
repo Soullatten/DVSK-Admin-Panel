@@ -52,12 +52,7 @@ const LOCATIONS: Location[] = [
   { id: 'LOC-4', name: 'London Pop-up', type: 'Pop-up', lat: 51.5074, lng: -0.1278 },
 ];
 
-const INITIAL_TRANSFERS: Transfer[] = [
-  { id: 'TRF-1042', source: LOCATIONS[0], destination: LOCATIONS[1], itemCount: 150, itemsName: 'Heavyweight Hoodies', status: 'In Transit', date: 'May 03, 2026', departureTimeMs: Date.now() - 3600000 },
-  { id: 'TRF-1041', source: LOCATIONS[3], destination: LOCATIONS[2], itemCount: 45, itemsName: 'Summer Caps', status: 'Completed', date: 'May 01, 2026' },
-  { id: 'TRF-1040', source: LOCATIONS[2], destination: LOCATIONS[3], itemCount: 12, itemsName: 'Damaged Returns', status: 'In Transit', date: 'May 03, 2026', departureTimeMs: Date.now() - 7200000 },
-  { id: 'TRF-1039', source: LOCATIONS[0], destination: LOCATIONS[2], itemCount: 300, itemsName: 'New Drop Accessories', status: 'Draft', date: 'May 04, 2026' },
-];
+const TRANSFERS_STORAGE_KEY = 'dvsk_transfers_v2';
 
 // ── Real-World Physics Math ──
 const calculateDistanceKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
@@ -162,15 +157,25 @@ const MovingAirplane = ({ route }: { route: Transfer }) => {
 // ── Main Component ──
 export default function Transfers() {
   const { data: liveData } = useMainWebsite('/transfers');
-  
+
   const [transfers, setTransfers] = useState<Transfer[]>(() => {
-    const saved = localStorage.getItem('logistics_transfers');
-    if (saved) return JSON.parse(saved);
-    return liveData && liveData.length > 0 ? liveData : INITIAL_TRANSFERS;
+    // Remove any stale demo data cached by older builds.
+    try { localStorage.removeItem('logistics_transfers'); } catch {}
+    try {
+      const saved = localStorage.getItem(TRANSFERS_STORAGE_KEY);
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [];
   });
 
   useEffect(() => {
-    localStorage.setItem('logistics_transfers', JSON.stringify(transfers));
+    if (Array.isArray(liveData) && liveData.length > 0) {
+      setTransfers(liveData as unknown as Transfer[]);
+    }
+  }, [liveData]);
+
+  useEffect(() => {
+    localStorage.setItem(TRANSFERS_STORAGE_KEY, JSON.stringify(transfers));
   }, [transfers]);
 
   const [showMap, setShowMap] = useState(false);

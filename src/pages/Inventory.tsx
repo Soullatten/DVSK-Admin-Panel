@@ -17,6 +17,7 @@ import toast from "react-hot-toast";
 // Keep your existing imports
 import { productService } from "../api/productService";
 import { useMainWebsite } from '../hooks/useMainWebsite';
+import { useAdminDataRefresh } from '../lib/useAdminDataRefresh';
 import {
   uploadProductImage,
   attachProductImages,
@@ -25,15 +26,35 @@ import {
 
 type Category = "men" | "women" | "accessories";
 
+interface ProductImage {
+  id: string;
+  url: string;
+  alt?: string | null;
+  position?: number;
+}
+
 interface Product {
   id: string;
   title?: string;
   name?: string;
   slug: string;
-  price: number | string;
+  price?: number | string;
+  basePrice?: number | string;
   description?: string;
-  category?: Category | string;
+  category?: Category | string | { name?: string; slug?: string };
+  images?: ProductImage[];
 }
+
+const productCategorySlug = (p: Product): string => {
+  const c: any = p.category;
+  if (!c) return "";
+  if (typeof c === "string") return c.toLowerCase();
+  return (c.slug || c.name || "").toString().toLowerCase();
+};
+
+const productPrice = (p: Product): number => {
+  return Number(p.basePrice ?? p.price ?? 0);
+};
 
 export default function Inventory() {
   const { data: liveData, loading: liveLoading, error: liveError, viewOnMainWebsite } = useMainWebsite('/inventory');
@@ -73,7 +94,20 @@ export default function Inventory() {
   const [coverFile, setCoverFile] = useState<File | null>(null);
   const [coverPreview, setCoverPreview] = useState<string | null>(null);
   const [imageFiles, setImageFiles] = useState<File[]>([]);
+  const [existingImages, setExistingImages] = useState<ProductImage[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleRemoveExistingImage = async (imageId: string) => {
+    if (!editingId) return;
+    if (!window.confirm("Remove this image from the product?")) return;
+    try {
+      await productService.removeImage(editingId, imageId);
+      setExistingImages((prev) => prev.filter((img) => img.id !== imageId));
+      toast.success("Image removed");
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error?.message || "Failed to remove image");
+    }
+  };
 
   const fetchProducts = async () => {
     setLoading(true);
@@ -92,6 +126,8 @@ export default function Inventory() {
   useEffect(() => {
     fetchProducts();
   }, []);
+
+  useAdminDataRefresh('products', fetchProducts);
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
@@ -197,12 +233,39 @@ export default function Inventory() {
 
         if (allFiles.length > 0) {
           const uploaded: { url: string }[] = [];
+          let failedCount = 0;
           for (const file of allFiles) {
-            const uploadRes = await uploadProductImage(file);
-            const url = (uploadRes as any).data.url;
-            uploaded.push({ url });
+            try {
+              const uploadRes = await uploadProductImage(file);
+              const body = (uploadRes as any).data;
+              const url: string | undefined = body?.data?.url ?? body?.url;
+              if (typeof url === "string" && url.length > 0) {
+                uploaded.push({ url });
+              } else {
+                failedCount += 1;
+                console.error("[Upload] no URL returned for", file.name, "response:", body);
+              }
+            } catch (err: any) {
+              failedCount += 1;
+              const status = err?.response?.status;
+              const apiMsg = err?.response?.data?.error?.message || err?.response?.data?.message;
+              console.error(`[Upload] failed (${status || "?"}) for ${file.name}:`, apiMsg || err?.message, err?.response?.data);
+            }
           }
-          await attachProductImages(product.id, uploaded);
+          if (uploaded.length > 0) {
+            try {
+              await attachProductImages(product.id, uploaded);
+            } catch (err: any) {
+              const apiMsg = err?.response?.data?.error?.message || err?.response?.data?.message || err?.message;
+              throw new Error(`Image upload OK but attach failed: ${apiMsg}`);
+            }
+          }
+          if (failedCount > 0) {
+            const ok = uploaded.length;
+            throw new Error(
+              `${failedCount} of ${allFiles.length} image(s) failed to upload. ${ok} attached. Check the browser console (F12) for the exact error.`
+            );
+          }
         }
         return "created";
       }
@@ -215,8 +278,24 @@ export default function Inventory() {
         closeForm();
         return result === "updated" ? "Product updated!" : "Product created!";
       },
-      error: (err: any) =>
-        err?.response?.data?.message || "Failed to save product",
+      error: (err: any) => {
+        const data = err?.response?.data;
+        const details = data?.error?.details;
+        if (Array.isArray(details) && details.length > 0) {
+          const fieldMsg = details
+            .map((d: any) => `${d.field || "?"}: ${d.message}`)
+            .join("; ");
+          console.error("[Save Product] validation errors:", details);
+          return `Failed: ${fieldMsg}`;
+        }
+        const msg =
+          data?.error?.message ||
+          data?.message ||
+          err?.message ||
+          "Failed to save product";
+        console.error("[Save Product] error:", err);
+        return msg;
+      },
     });
   };
 
@@ -234,16 +313,28 @@ export default function Inventory() {
   };
 
   const openEditForm = (product: Product) => {
+    const catSlug = productCategorySlug(product);
+    const safeCat: Category = (catSlug === "men" || catSlug === "women" || catSlug === "accessories")
+      ? catSlug
+      : "men";
     setFormData({
       title: product.title || product.name || "",
       slug: product.slug || "",
-      price: product.price?.toString() || "",
+      price: productPrice(product).toString(),
       description: product.description || "",
-      category: (product.category as Category) || "men",
+      category: safeCat,
       sizes: ["M"],
       stock: "0",
     });
     setEditingId(product.id);
+    const imgs = Array.isArray(product.images) ? product.images : [];
+    setExistingImages(imgs);
+    setCoverFile(null);
+    // If the product already has a saved cover image, show its URL in the cover preview
+    // so user can immediately see what's currently on the storefront.
+    const sortedFirst = imgs.slice().sort((a, b) => (a.position ?? 0) - (b.position ?? 0))[0];
+    setCoverPreview(sortedFirst ? sortedFirst.url : null);
+    setImageFiles([]);
     setIsFormOpen(true);
   };
 
@@ -261,11 +352,12 @@ export default function Inventory() {
     });
     removeCover();
     setImageFiles([]);
+    setExistingImages([]);
   };
 
   // Filter Logic
   const filteredProducts = products.filter(p => {
-    const matchesCategory = activeCategory === "all" || (p.category || "").toString().toLowerCase() === activeCategory;
+    const matchesCategory = activeCategory === "all" || productCategorySlug(p) === activeCategory;
     const matchesSearch = (p.title || p.name || "").toLowerCase().includes(searchQuery.toLowerCase());
     return matchesCategory && matchesSearch;
   });
@@ -373,11 +465,11 @@ export default function Inventory() {
                     <td className="px-6 py-4 text-[13px] text-[#a0a0a0] font-mono">{product.slug}</td>
                     <td className="px-6 py-4">
                       <span className="inline-flex px-2.5 py-1 rounded-md bg-[#1a1a1a] border border-white/5 text-[#ececec] text-[12px] font-medium capitalize">
-                        {(product.category || "—").toString()}
+                        {productCategorySlug(product) || "—"}
                       </span>
                     </td>
                     <td className="px-6 py-4 text-[14px] font-semibold text-emerald-400">
-                      ₹{Number(product.price || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      ₹{productPrice(product).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -412,9 +504,53 @@ export default function Inventory() {
             <div className="p-5 overflow-y-auto custom-scrollbar">
               <form id="product-form" onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 
+                {/* Existing images (edit mode only) */}
+                {editingId && existingImages.length > 0 && (
+                  <div className="md:col-span-2">
+                    <label className="block text-[12px] font-medium text-[#888] mb-1.5 uppercase tracking-wider">
+                      Current Images ({existingImages.length})
+                    </label>
+                    <div className="grid grid-cols-4 gap-2">
+                      {existingImages
+                        .slice()
+                        .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+                        .map((img, idx) => (
+                          <div
+                            key={img.id}
+                            className="relative aspect-square rounded-xl overflow-hidden border border-white/10 group bg-[#1a1a1a]"
+                          >
+                            <img
+                              src={img.url}
+                              alt={img.alt || `image ${idx + 1}`}
+                              className="w-full h-full object-cover"
+                            />
+                            {idx === 0 && (
+                              <span className="absolute top-1.5 left-1.5 bg-black/70 backdrop-blur-md text-white text-[9px] font-bold px-1.5 py-0.5 rounded tracking-wider uppercase border border-white/10">
+                                Cover
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveExistingImage(img.id)}
+                              className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-red-500/80 hover:bg-red-500 text-white opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center backdrop-blur-md border border-white/10"
+                              title="Remove this image"
+                            >
+                              <X className="w-3.5 h-3.5" strokeWidth={2.5} />
+                            </button>
+                          </div>
+                        ))}
+                    </div>
+                    <p className="text-[11px] text-[#666] mt-1.5">
+                      Hover any image and click ✕ to remove it. Position 1 = cover on storefront.
+                    </p>
+                  </div>
+                )}
+
                 {/* Drag & Drop Cover Photo */}
                 <div className="md:col-span-2">
-                  <label className="block text-[12px] font-medium text-[#888] mb-1.5 uppercase tracking-wider">Cover Photo</label>
+                  <label className="block text-[12px] font-medium text-[#888] mb-1.5 uppercase tracking-wider">
+                    {editingId ? (existingImages.length > 0 ? "Add More Images" : "Cover Photo") : "Cover Photo"}
+                  </label>
                   {coverPreview ? (
                     <div className="relative w-full h-48 rounded-xl overflow-hidden border border-white/10 group">
                       <img src={coverPreview} alt="Cover preview" className="w-full h-full object-cover" />

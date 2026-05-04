@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import { apiClient } from "../api/client";
+import { STOREFRONT_URL } from "../config";
 
 export function useMainWebsite<T>(endpoint: string) {
   const [data, setData] = useState<T[]>([]);
@@ -8,20 +10,16 @@ export function useMainWebsite<T>(endpoint: string) {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const token = localStorage.getItem("adminAuthToken");
-        const response = await fetch(`http://localhost:5000/api${endpoint}`, {
-          headers: {
-            "Authorization": `Bearer ${token}`,
-            "Content-Type": "application/json"
-          }
-        });
-
-        if (!response.ok) throw new Error("Failed to fetch data");
-        
-        const result = await response.json();
-        setData(result);
+        const response = await apiClient.get(endpoint);
+        const payload = response.data?.data ?? response.data;
+        setData(Array.isArray(payload) ? payload : []);
       } catch (err: any) {
-        setError(err.message);
+        const msg =
+          err?.response?.data?.error?.message ||
+          err?.response?.data?.message ||
+          err?.message ||
+          "Failed to fetch data";
+        setError(msg);
       } finally {
         setLoading(false);
       }
@@ -31,7 +29,7 @@ export function useMainWebsite<T>(endpoint: string) {
   }, [endpoint]);
 
   const viewOnMainWebsite = (path: string) => {
-    window.open(`http://localhost:5173/${path}`, "_blank");
+    window.open(`${STOREFRONT_URL}/${path.replace(/^\//, "")}`, "_blank");
   };
 
   return { data, loading, error, viewOnMainWebsite };

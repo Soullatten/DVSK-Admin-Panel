@@ -1,3 +1,5 @@
 // src/config.ts
-export const STOREFRONT_URL = "http://localhost:5173/"; // Change to your actual main website
-export const API_BASE_URL = "http://localhost:5000/api";       // Change to your live backend later
+// Public-facing storefront URL (the React main website)
+export const STOREFRONT_URL = "http://localhost:5173";
+// DVSK main website backend — the single API the admin panel talks to.
+export const API_BASE_URL = "http://localhost:5000/api";

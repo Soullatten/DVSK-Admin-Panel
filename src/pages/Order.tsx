@@ -8,11 +8,22 @@ import {
   XCircle,
   ChevronDown,
   ArrowUpRight,
-  Loader2
+  Loader2,
+  X,
+  MapPin,
+  Mail,
+  Phone,
+  Package,
+  Clock,
+  Receipt,
+  User,
 } from "lucide-react";
+import { motion as motionDetail, AnimatePresence } from "framer-motion";
 import toast from "react-hot-toast";
+import type { Socket } from "socket.io-client";
 import { orderService } from "../api/orderService";
-import type { ApiOrder, OrderStatsSummary } from "../api/orderService";
+import type { ApiOrder, OrderStatsSummary, StatsPeriod } from "../api/orderService";
+import { connectLiveFeed } from "../lib/liveSocket";
 import { motion } from "framer-motion";
 
 // Helper to convert numbers to formatted ₹ string
@@ -122,13 +133,28 @@ export default function Order() {
   const [selectedDateFilter, setSelectedDateFilter] = useState<TimeFilter>("Last 30 days");
   const dropdownRef = useRef<HTMLDivElement>(null);
 
+  const [detailOrder, setDetailOrder] = useState<ApiOrder | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  const openOrderDetail = async (orderId: string) => {
+    setDetailLoading(true);
+    try {
+      const order = await orderService.getByIdAdmin(orderId);
+      setDetailOrder(order);
+    } catch (err) {
+      toast.error("Failed to load order details");
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
   const fetchOrders = async () => {
     setLoading(true);
     try {
       const apiOrders = await orderService.list();
 
       const mapped: MappedOrder[] = apiOrders.map((o: ApiOrder) => {
-        const paymentStatus = o.Payment?.status || "PENDING";
+        const paymentStatus = o.payment?.status || "PENDING";
         let payment: MappedOrder["payment"];
         switch (paymentStatus) {
           case "SUCCESS": case "CAPTURED": payment = "Paid"; break;
@@ -151,7 +177,7 @@ export default function Order() {
           id: o.id,
           orderNumber: o.orderNumber ? `#${o.orderNumber}` : `#${o.id.slice(0, 6).toUpperCase()}`,
           date: new Date(o.createdAt).toLocaleString("en-IN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }),
-          customer: o.User?.name || o.User?.email || "Guest Customer",
+          customer: o.user?.name || o.user?.email || "Guest Customer",
           total: formatMoney(o.total),
           payment,
           fulfillment,
@@ -166,9 +192,9 @@ export default function Order() {
     }
   };
 
-  const fetchStats = async () => {
+  const fetchStats = async (period?: StatsPeriod) => {
     try {
-      const stats = await orderService.stats();
+      const stats = await orderService.stats(period ?? (selectedDateFilter as StatsPeriod));
       setStatsSummary(stats);
     } catch (error) {
       console.error("Failed to load stats", error);
@@ -177,8 +203,30 @@ export default function Order() {
 
   useEffect(() => {
     fetchOrders();
-    fetchStats();
-  }, []);
+    fetchStats(selectedDateFilter as StatsPeriod);
+  }, [selectedDateFilter]);
+
+  // Live refresh: re-fetch on every order:placed event
+  useEffect(() => {
+    let cancelled = false;
+    let socket: Socket | null = null;
+    (async () => {
+      socket = await connectLiveFeed();
+      if (cancelled) {
+        socket.disconnect();
+        return;
+      }
+      socket.on("order:placed", () => {
+        fetchOrders();
+        fetchStats(selectedDateFilter as StatsPeriod);
+      });
+    })();
+    return () => {
+      cancelled = true;
+      socket?.disconnect();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDateFilter]);
 
   const filteredOrders = orders.filter((order) =>
     `${order.customer} ${order.orderNumber} ${order.payment} ${order.fulfillment}`
@@ -285,8 +333,8 @@ export default function Order() {
             
             <div className="px-6 py-5 flex-1 min-w-[200px] relative group hover:bg-white/[0.02] transition-colors md:rounded-r-2xl">
               <div className="text-[13px] font-medium text-[#888] mb-1">Active Days</div>
-              <div className="text-[28px] font-bold text-white tracking-tight">{statsSummary?.daily.length || 0}</div>
-              <Sparkline data={statsSummary?.daily.length ? Array(statsSummary.daily.length).fill(1) : ([] as number[])} color="#60a5fa" gradientId="grad-days" />
+              <div className="text-[28px] font-bold text-white tracking-tight">{statsSummary?.activeDays ?? 0}</div>
+              <Sparkline data={dailyCounts.map((c) => (c > 0 ? 1 : 0))} color="#60a5fa" gradientId="grad-days" />
             </div>
 
           </div>
@@ -345,7 +393,7 @@ export default function Order() {
               </thead>
               <tbody className="divide-y divide-white/5">
                 {filteredOrders.map((order) => (
-                  <tr key={order.id} className="hover:bg-white/[0.03] transition-colors group cursor-pointer">
+                  <tr key={order.id} onClick={() => openOrderDetail(order.id)} className="hover:bg-white/[0.03] transition-colors group cursor-pointer">
                     
                     <td className="px-6 py-4">
                       <span className="text-[14px] font-bold text-white hover:text-purple-400 transition-colors">
@@ -428,6 +476,189 @@ export default function Order() {
           )}
         </div>
       </div>
+
+      {/* ── ORDER DETAIL DRAWER ── */}
+      <AnimatePresence>
+        {(detailOrder || detailLoading) && (
+          <>
+            <motionDetail.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => { setDetailOrder(null); }}
+              className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[100]"
+            />
+            <motionDetail.div
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ type: 'spring', damping: 28, stiffness: 220 }}
+              className="fixed right-0 top-0 bottom-0 w-full max-w-[520px] bg-[#0a0a0a] border-l border-white/10 z-[110] shadow-[-8px_0_40px_rgba(0,0,0,0.8)] flex flex-col overflow-hidden"
+            >
+              <div className="p-5 border-b border-white/10 bg-[#111] flex items-center justify-between shrink-0">
+                <div>
+                  <div className="text-[11px] font-bold text-purple-400 tracking-widest uppercase mb-0.5">Order Detail</div>
+                  <h2 className="text-[18px] font-bold text-white">
+                    {detailOrder ? `#${detailOrder.orderNumber}` : 'Loading…'}
+                  </h2>
+                </div>
+                <button
+                  onClick={() => setDetailOrder(null)}
+                  className="p-2 rounded-xl hover:bg-white/5 text-[#888] hover:text-white transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-5 space-y-5">
+                {detailLoading && !detailOrder ? (
+                  <div className="flex items-center justify-center py-20 text-[#888]">
+                    <Loader2 className="w-6 h-6 animate-spin text-purple-400" />
+                  </div>
+                ) : detailOrder ? (
+                  <>
+                    {/* Customer block */}
+                    <div className="bg-[#111] border border-white/10 rounded-2xl p-4 space-y-3">
+                      <div className="flex items-center gap-2 text-[11px] font-bold text-[#666] uppercase tracking-wider">
+                        <User className="w-3.5 h-3.5" /> Customer
+                      </div>
+                      <div className="text-[15px] font-bold text-white">
+                        {detailOrder.user?.name || detailOrder.address?.fullName || 'Guest Customer'}
+                      </div>
+                      {detailOrder.user?.email && (
+                        <div className="flex items-center gap-2 text-[13px] text-[#aaa]">
+                          <Mail className="w-3.5 h-3.5 text-[#666]" /> {detailOrder.user.email}
+                        </div>
+                      )}
+                      {(detailOrder.user?.phone || detailOrder.address?.phone) && (
+                        <div className="flex items-center gap-2 text-[13px] text-[#aaa]">
+                          <Phone className="w-3.5 h-3.5 text-[#666]" /> {detailOrder.user?.phone || detailOrder.address?.phone}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Shipping address block */}
+                    {detailOrder.address && (
+                      <div className="bg-[#111] border border-white/10 rounded-2xl p-4 space-y-2">
+                        <div className="flex items-center gap-2 text-[11px] font-bold text-[#666] uppercase tracking-wider">
+                          <MapPin className="w-3.5 h-3.5" /> Shipping Address
+                        </div>
+                        <div className="text-[14px] text-white font-medium">{detailOrder.address.fullName}</div>
+                        <div className="text-[13px] text-[#bbb] leading-relaxed">
+                          {detailOrder.address.addressLine1}
+                          {detailOrder.address.addressLine2 ? `, ${detailOrder.address.addressLine2}` : ''}
+                          <br />
+                          {detailOrder.address.city}, {detailOrder.address.state} – {detailOrder.address.pincode}
+                          <br />
+                          {detailOrder.address.country}
+                        </div>
+                        <div className="text-[12px] text-[#666] flex items-center gap-1.5 mt-1">
+                          <Phone className="w-3 h-3" /> {detailOrder.address.phone}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Items block */}
+                    <div className="bg-[#111] border border-white/10 rounded-2xl p-4 space-y-3">
+                      <div className="flex items-center gap-2 text-[11px] font-bold text-[#666] uppercase tracking-wider">
+                        <Package className="w-3.5 h-3.5" /> Items ({detailOrder.items?.length || 0})
+                      </div>
+                      <div className="space-y-2">
+                        {detailOrder.items?.map((it: any) => (
+                          <div key={it.id} className="flex items-start gap-3 bg-[#0a0a0a] border border-white/5 rounded-xl p-3">
+                            {it.image ? (
+                              <img src={it.image} alt={it.productName} className="w-12 h-12 rounded-lg object-cover border border-white/5" />
+                            ) : (
+                              <div className="w-12 h-12 rounded-lg bg-[#1a1a1a] border border-white/5 flex items-center justify-center">
+                                <Package className="w-4 h-4 text-[#555]" />
+                              </div>
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[13px] font-semibold text-white truncate">{it.productName}</div>
+                              <div className="text-[11px] text-[#888] mt-0.5">
+                                {it.size} · {it.color} · qty {it.quantity}
+                              </div>
+                            </div>
+                            <div className="text-[13px] font-mono text-emerald-400 shrink-0">
+                              ₹{Number(it.totalPrice).toLocaleString('en-IN')}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Totals + Payment */}
+                    <div className="bg-[#111] border border-white/10 rounded-2xl p-4 space-y-2">
+                      <div className="flex items-center gap-2 text-[11px] font-bold text-[#666] uppercase tracking-wider mb-1">
+                        <Receipt className="w-3.5 h-3.5" /> Payment
+                      </div>
+                      <div className="flex items-center justify-between text-[13px] text-[#aaa]">
+                        <span>Subtotal</span>
+                        <span className="font-mono">{formatMoney(detailOrder.subtotal)}</span>
+                      </div>
+                      {Number(detailOrder.discount) > 0 && (
+                        <div className="flex items-center justify-between text-[13px] text-emerald-400">
+                          <span>Discount</span>
+                          <span className="font-mono">-{formatMoney(detailOrder.discount)}</span>
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between text-[13px] text-[#aaa]">
+                        <span>Shipping</span>
+                        <span className="font-mono">{formatMoney(detailOrder.shippingCost)}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-[13px] text-[#aaa]">
+                        <span>Tax (GST)</span>
+                        <span className="font-mono">{formatMoney(detailOrder.tax)}</span>
+                      </div>
+                      <div className="border-t border-white/10 pt-2 mt-2 flex items-center justify-between text-[15px] font-bold text-white">
+                        <span>Total</span>
+                        <span className="font-mono text-emerald-400">{formatMoney(detailOrder.total)}</span>
+                      </div>
+                      {detailOrder.payment && (
+                        <div className="mt-3 pt-3 border-t border-white/5 text-[12px] text-[#888] space-y-1">
+                          <div>Payment: <span className="text-[#ccc] font-medium">{detailOrder.payment.status}</span></div>
+                          {detailOrder.payment.method && (
+                            <div>Method: <span className="text-[#ccc] font-medium">{detailOrder.payment.method}</span></div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Status + meta */}
+                    <div className="bg-[#111] border border-white/10 rounded-2xl p-4 space-y-2">
+                      <div className="flex items-center gap-2 text-[11px] font-bold text-[#666] uppercase tracking-wider">
+                        <Clock className="w-3.5 h-3.5" /> Order Meta
+                      </div>
+                      <div className="text-[13px] text-[#aaa] flex items-center justify-between">
+                        <span>Status</span>
+                        <span className="text-white font-semibold">{detailOrder.status}</span>
+                      </div>
+                      <div className="text-[13px] text-[#aaa] flex items-center justify-between">
+                        <span>Placed</span>
+                        <span className="text-[#ccc] font-mono text-[12px]">
+                          {new Date(detailOrder.createdAt).toLocaleString('en-IN')}
+                        </span>
+                      </div>
+                      {detailOrder.couponCode && (
+                        <div className="text-[13px] text-[#aaa] flex items-center justify-between">
+                          <span>Coupon</span>
+                          <span className="text-purple-400 font-mono text-[12px]">{detailOrder.couponCode}</span>
+                        </div>
+                      )}
+                      {detailOrder.notes && (
+                        <div className="text-[12px] text-[#aaa] mt-2 pt-2 border-t border-white/5">
+                          <div className="text-[10px] uppercase tracking-wider text-[#666] mb-1">Notes</div>
+                          {detailOrder.notes}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            </motionDetail.div>
+          </>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

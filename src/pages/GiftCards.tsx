@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Gift, 
   Plus, 
@@ -13,7 +13,8 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { useMainWebsite } from '../hooks/useMainWebsite';
+import { giftCardsApi } from '../api/marketingService';
+import { useAdminDataRefresh } from '../lib/useAdminDataRefresh';
 
 // ── Types & Demo Data ──
 type CardStatus = 'Active' | 'Disabled' | 'Depleted';
@@ -29,17 +30,43 @@ interface GiftCardData {
   status: CardStatus;
 }
 
-const INITIAL_CARDS: GiftCardData[] = [
-  { id: 'GC-1004', code: '• • • • 4921', customerName: 'Alex Carter', customerEmail: 'alex@example.com', initialValue: 100, currentBalance: 100, issueDate: 'May 03, 2026', status: 'Active' },
-  { id: 'GC-1003', code: '• • • • 8832', customerName: 'Sarah Jenkins', customerEmail: 'sarah.j@example.com', initialValue: 50, currentBalance: 12.50, issueDate: 'Apr 28, 2026', status: 'Active' },
-  { id: 'GC-1002', code: '• • • • 1109', customerName: 'Mike Ross', customerEmail: 'mross@company.com', initialValue: 200, currentBalance: 0, issueDate: 'Apr 15, 2026', status: 'Depleted' },
-  { id: 'GC-1001', code: '• • • • 7745', customerName: 'Emily Chen', customerEmail: 'emily.chen@email.com', initialValue: 25, currentBalance: 25, issueDate: 'Mar 10, 2026', status: 'Disabled' },
-];
+const STATUS_FROM_API: Record<string, CardStatus> = {
+  ACTIVE: 'Active', DISABLED: 'Disabled', DEPLETED: 'Depleted',
+};
+const STATUS_TO_API: Record<CardStatus, string> = {
+  Active: 'ACTIVE', Disabled: 'DISABLED', Depleted: 'DEPLETED',
+};
+
+const apiToCard = (a: any): GiftCardData => ({
+  id: a.id,
+  code: a.code,
+  customerName: a.customerName || 'Guest User',
+  customerEmail: a.customerEmail || '',
+  initialValue: Number(a.initialValue) || 0,
+  currentBalance: Number(a.currentBalance) || 0,
+  issueDate: a.createdAt
+    ? new Date(a.createdAt).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' })
+    : '—',
+  status: STATUS_FROM_API[a.status] ?? 'Active',
+});
 
 export default function GiftCards() {
-  const { data: liveData } = useMainWebsite('/giftcards');
-  
-  const [cards, setCards] = useState<GiftCardData[]>(liveData && liveData.length > 0 ? liveData : INITIAL_CARDS);
+  const [cards, setCards] = useState<GiftCardData[]>([]);
+
+  const refresh = async () => {
+    try {
+      const list = await giftCardsApi.list();
+      setCards(list.map(apiToCard));
+    } catch (err) {
+      console.error('[GiftCards] failed to load', err);
+    }
+  };
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  useAdminDataRefresh('gift-cards', refresh);
   const [searchQuery, setSearchQuery] = useState('');
   
   // Modal State
@@ -65,38 +92,39 @@ export default function GiftCards() {
     toast.success('Gift card code copied!');
   };
 
-  const handleIssueCard = (e: React.FormEvent) => {
+  const handleIssueCard = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.customerEmail || !formData.value) {
       toast.error('Email and Value are required');
       return;
     }
-
-    const newCodeLast4 = Math.floor(1000 + Math.random() * 9000).toString();
     const newValue = parseFloat(formData.value);
-
-    const newCard: GiftCardData = {
-      id: `GC-${Math.floor(1000 + Math.random() * 9000)}`,
-      code: `• • • • ${newCodeLast4}`,
-      customerName: formData.customerName || 'Guest User',
-      customerEmail: formData.customerEmail,
-      initialValue: newValue,
-      currentBalance: newValue,
-      issueDate: new Date().toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }),
-      status: 'Active'
-    };
-
-    setCards([newCard, ...cards]);
-    setIsModalOpen(false);
-    setFormData({ customerName: '', customerEmail: '', value: '50', note: '' });
-    toast.success(`$${newValue} Gift Card issued to ${formData.customerEmail}`);
+    try {
+      const created = await giftCardsApi.create({
+        customerName: formData.customerName || null,
+        customerEmail: formData.customerEmail,
+        value: newValue,
+        note: formData.note || null,
+      });
+      setCards(prev => [apiToCard(created), ...prev]);
+      setIsModalOpen(false);
+      setFormData({ customerName: '', customerEmail: '', value: '50', note: '' });
+      toast.success(`₹${newValue} Gift Card issued to ${formData.customerEmail}`);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error?.message || 'Failed to issue card');
+    }
   };
 
-  const toggleStatus = (id: string, currentStatus: CardStatus) => {
+  const toggleStatus = async (id: string, currentStatus: CardStatus) => {
     if (currentStatus === 'Depleted') return toast.error('Cannot reactivate a depleted card.');
-    const newStatus = currentStatus === 'Active' ? 'Disabled' : 'Active';
-    setCards(cards.map(c => c.id === id ? { ...c, status: newStatus } : c));
-    toast.success(`Card ${newStatus}`);
+    const newStatus: CardStatus = currentStatus === 'Active' ? 'Disabled' : 'Active';
+    try {
+      const updated = await giftCardsApi.update(id, { status: STATUS_TO_API[newStatus] });
+      setCards(prev => prev.map(c => (c.id === id ? apiToCard(updated) : c)));
+      toast.success(`Card ${newStatus}`);
+    } catch {
+      toast.error('Failed to update status');
+    }
   };
 
   const filteredCards = cards.filter(c => 

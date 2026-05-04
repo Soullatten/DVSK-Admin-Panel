@@ -21,7 +21,8 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { useMainWebsite } from '../hooks/useMainWebsite';
+import { automationsApi } from '../api/marketingService';
+import { useAdminDataRefresh } from '../lib/useAdminDataRefresh';
 
 // ── Types ──
 type FlowStatus = 'Active' | 'Draft' | 'Paused';
@@ -50,28 +51,48 @@ interface Automation {
   color: string;
 }
 
-// ── Demo Data ──
-const DEMO_AUTOMATIONS: Automation[] = [
-  {
-    id: 'FLOW-1',
-    name: 'Abandoned Cart Recovery',
-    description: 'Send a reminder email 2 hours after a customer leaves items in their cart.',
-    status: 'Active',
-    metrics: { sent: 1240, clicked: '42%', revenue: '$4,250' },
-    icon: <ShoppingCart className="w-5 h-5 text-orange-400" />,
-    color: 'bg-orange-500/10 border-orange-500/20',
-    steps: [
-      { id: 's1', type: 'trigger', title: 'Checkout Abandoned', description: 'Customer leaves checkout', icon: <ShoppingCart className="w-4 h-4"/>, color: 'text-orange-400 bg-orange-500/10', position: { x: 150, y: 50 } },
-      { id: 's2', type: 'delay', title: 'Wait 2 Hours', description: 'Time delay', icon: <Clock className="w-4 h-4"/>, color: 'text-[#888] bg-[#222]', position: { x: 150, y: 200 } },
-      { id: 's3', type: 'email', title: 'Send Email 1', description: 'Template: "Forgot something?"', icon: <Mail className="w-4 h-4"/>, color: 'text-emerald-400 bg-emerald-500/10', position: { x: 150, y: 350 } }
-    ]
-  }
-];
+const FLOW_STATUS_FROM_API: Record<string, FlowStatus> = {
+  ACTIVE: 'Active', PAUSED: 'Paused', DRAFT: 'Draft',
+};
+const FLOW_STATUS_TO_API: Record<FlowStatus, string> = {
+  Active: 'ACTIVE', Paused: 'PAUSED', Draft: 'DRAFT',
+};
+
+const apiToAutomation = (a: any): Automation => ({
+  id: a.id,
+  name: a.name,
+  description: a.description || '',
+  status: FLOW_STATUS_FROM_API[a.status] ?? 'Draft',
+  metrics: {
+    sent: a.metricsSent || 0,
+    clicked: `${a.metricsClicked || 0}%`,
+    revenue: `₹${Number(a.metricsRevenue || 0).toLocaleString('en-IN')}`,
+  },
+  icon: <Workflow className="w-5 h-5 text-purple-400" />,
+  color: 'bg-purple-500/10 border-purple-500/20',
+  steps: Array.isArray(a.steps) ? a.steps : [],
+});
+
+const stripIcons = (steps: AutomationStep[]) =>
+  steps.map(s => ({ ...s, icon: undefined }));
 
 export default function Automations() {
-  const { data: liveData } = useMainWebsite('/automations');
-  
-  const [automations, setAutomations] = useState<Automation[]>(DEMO_AUTOMATIONS);
+  const [automations, setAutomations] = useState<Automation[]>([]);
+
+  const refresh = async () => {
+    try {
+      const list = await automationsApi.list();
+      setAutomations(list.map(apiToAutomation));
+    } catch (err) {
+      console.error('[Automations] failed to load', err);
+    }
+  };
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  useAdminDataRefresh('automations', refresh);
   const [searchQuery, setSearchQuery] = useState('');
 
   // Canvas Builder State
@@ -86,16 +107,30 @@ export default function Automations() {
 
   // ── Handlers ──
 
-  const toggleFlowStatus = (e: React.MouseEvent, id: string) => {
+  const toggleFlowStatus = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    setAutomations(automations.map(flow => {
-      if (flow.id === id) {
-        const newStatus = flow.status === 'Active' ? 'Paused' : 'Active';
-        toast.success(`Workflow "${flow.name}" is now ${newStatus}.`);
-        return { ...flow, status: newStatus };
-      }
-      return flow;
-    }));
+    const current = automations.find(a => a.id === id);
+    if (!current) return;
+    const next: FlowStatus = current.status === 'Active' ? 'Paused' : 'Active';
+    try {
+      const updated = await automationsApi.update(id, { status: FLOW_STATUS_TO_API[next] });
+      const view = apiToAutomation(updated);
+      setAutomations(prev => prev.map(a => (a.id === id ? view : a)));
+      toast.success(`Workflow "${view.name}" is now ${view.status}.`);
+    } catch {
+      toast.error('Failed to update status');
+    }
+  };
+
+  const deleteFlow = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    try {
+      await automationsApi.remove(id);
+      setAutomations(prev => prev.filter(a => a.id !== id));
+      toast.success('Automation deleted.');
+    } catch {
+      toast.error('Failed to delete');
+    }
   };
 
   const openNewCanvas = () => {
@@ -124,7 +159,7 @@ export default function Automations() {
     setEditingFlow(null);
   };
 
-  const handleSaveCanvas = () => {
+  const handleSaveCanvas = async () => {
     if (!editingFlow) return;
     if (editingFlow.steps.length === 0) return toast.error("Cannot save an empty workflow. Add nodes.");
 
@@ -133,13 +168,25 @@ export default function Automations() {
     }
 
     const exists = automations.find(a => a.id === editingFlow.id);
-    if (exists) {
-      setAutomations(automations.map(a => a.id === editingFlow.id ? editingFlow : a));
-    } else {
-      setAutomations([editingFlow, ...automations]);
+    const payload = {
+      name: editingFlow.name,
+      description: editingFlow.description,
+      status: FLOW_STATUS_TO_API[editingFlow.status],
+      steps: stripIcons(editingFlow.steps),
+    };
+    try {
+      if (exists) {
+        const updated = await automationsApi.update(editingFlow.id, payload);
+        setAutomations(prev => prev.map(a => (a.id === editingFlow.id ? apiToAutomation(updated) : a)));
+      } else {
+        const created = await automationsApi.create(payload);
+        setAutomations(prev => [apiToAutomation(created), ...prev]);
+      }
+      toast.success("Workflow saved successfully!");
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error?.message || 'Failed to save');
+      return;
     }
-
-    toast.success("Workflow saved successfully!");
     setIsCanvasOpen(false);
     setEditingFlow(null);
   };

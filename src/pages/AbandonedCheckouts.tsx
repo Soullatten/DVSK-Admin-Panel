@@ -11,7 +11,9 @@ import {
   Sparkles
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { useMainWebsite } from '../hooks/useMainWebsite';
+import type { Socket } from 'socket.io-client';
+import { abandonedCheckoutsApi } from '../api/marketingService';
+import { connectLiveFeed } from '../lib/liveSocket';
 
 // ── Types ──
 type EmailStatus = 'Sent' | 'Not sent' | 'Scheduled' | 'AI Processing';
@@ -44,25 +46,48 @@ export default function AbandonedCheckouts() {
   const [activeFilter, setActiveFilter] = useState<'All' | EmailStatus>('All');
   const filterRef = useRef<HTMLDivElement>(null);
 
-  // Real backend connection
-  const { data: liveData, loading: liveLoading, error: liveError } = useMainWebsite('/abandonedcheckouts');
-
-  // ── Data Transformation Layer ──
-  useEffect(() => {
-    if (liveData && Array.isArray(liveData) && liveData.length > 0) {
-      const mapped = liveData.map((item: any) => ({
-        id: item.id || item.checkoutNumber || `#110${Math.floor(Math.random() * 9000)}`,
-        date: item.createdAt ? new Date(item.createdAt).toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Unknown Date',
-        customer: item.User?.email || item.email || 'unknown (Guest)',
-        emailStatus: item.emailStatus || 'Not sent',
-        recoveryStatus: item.recoveryStatus || 'Not recovered',
-        total: item.total ? `₹${Number(item.total).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '₹0.00',
+  const fetchAbandoned = async () => {
+    try {
+      const items = await abandonedCheckoutsApi.list();
+      const mapped = items.map((item: any) => ({
+        id: item.checkoutNumber || `#AC-${(item.id || '').slice(0, 6).toUpperCase()}`,
+        date: item.createdAt
+          ? new Date(item.createdAt).toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+          : 'Unknown Date',
+        customer: item.email || 'unknown (Guest)',
+        emailStatus: (item.emailStatus || 'Not sent') as EmailStatus,
+        recoveryStatus: (item.recoveryStatus || 'Not recovered') as RecoveryStatus,
+        total: `₹${Number(item.total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
       }));
       setLocalCheckouts(mapped);
-    } else {
-      setLocalCheckouts(demoCheckouts);
+    } catch (err) {
+      console.error('[AbandonedCheckouts] failed to load', err);
+      setLocalCheckouts([]);
     }
-  }, [liveData]);
+  };
+
+  useEffect(() => {
+    fetchAbandoned();
+  }, []);
+
+  // Refresh on every order placed (so the abandoned cart that just converted disappears)
+  useEffect(() => {
+    let cancelled = false;
+    let socket: Socket | null = null;
+    (async () => {
+      socket = await connectLiveFeed();
+      if (cancelled) {
+        socket.disconnect();
+        return;
+      }
+      socket.on('order:placed', fetchAbandoned);
+      socket.on('cart:add', fetchAbandoned);
+    })();
+    return () => {
+      cancelled = true;
+      socket?.disconnect();
+    };
+  }, []);
 
   // Handle clicking outside filter dropdown
   useEffect(() => {
@@ -126,8 +151,6 @@ export default function AbandonedCheckouts() {
     const matchesFilter = activeFilter === 'All' || checkout.emailStatus === activeFilter;
     return matchesSearch && matchesFilter;
   });
-
-  if (liveError) console.error("Backend Error:", liveError);
 
   return (
     <div className="min-h-full p-6 lg:p-8 max-w-[1200px] mx-auto text-[#ececec]">
@@ -204,12 +227,7 @@ export default function AbandonedCheckouts() {
 
         {/* Table Area */}
         <div className="overflow-x-auto">
-          {liveLoading ? (
-            <div className="py-32 flex flex-col items-center justify-center gap-3">
-              <Loader2 className="w-6 h-6 text-purple-500 animate-spin" />
-              <span className="text-[13px] text-[#888] font-medium">Loading checkouts...</span>
-            </div>
-          ) : filteredCheckouts.length === 0 ? (
+          {filteredCheckouts.length === 0 ? (
             <div className="py-32 flex flex-col items-center justify-center text-center">
               <div className="w-16 h-16 rounded-full bg-[#1a1a1a] border border-white/10 flex items-center justify-center mb-4">
                 <ShoppingCart className="w-6 h-6 text-[#666]" />

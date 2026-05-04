@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { 
-  Search, 
-  Filter, 
-  Plus, 
+import {
+  Search,
+  Filter,
+  Plus,
   MoreHorizontal,
   X,
   Check,
@@ -14,6 +14,7 @@ import {
   ChevronDown
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { productService } from '../api/productService';
 
 // ── Types ──
 type ProductStatus = 'Active' | 'Draft' | 'Archived';
@@ -31,18 +32,53 @@ interface Product {
   imageUrl?: string;
 }
 
-// Demo Data
-const initialProducts: Product[] = [
-  { id: 'PROD-001', name: 'Heavyweight Cotton Hoodie', category: 'Men', status: 'Active', inventory: 145, inventoryStatus: 'In stock', price: '3499.00' },
-  { id: 'PROD-002', name: 'Minimalist Cargo Pants', category: 'Men', status: 'Active', inventory: 8, inventoryStatus: 'Low stock', price: '2899.00' },
-  { id: 'PROD-003', name: 'Oversized Graphic Tee', category: 'Women', status: 'Draft', inventory: 0, inventoryStatus: 'Out of stock', price: '1299.00' },
-  { id: 'PROD-004', name: 'Crossbody Messenger Bag', category: 'Accessories', status: 'Active', inventory: 56, inventoryStatus: 'In stock', price: '1899.00' },
-  { id: 'PROD-005', name: 'Premium Knit Beanie', category: 'Accessories', status: 'Archived', inventory: 0, inventoryStatus: 'Out of stock', price: '799.00' },
-];
+const mapApiProductToView = (p: any): Product => {
+  const totalStock = Array.isArray(p.variants)
+    ? p.variants.reduce((sum: number, v: any) => sum + Number(v.stock ?? 0), 0)
+    : 0;
+  let inventoryStatus: InventoryStatus = 'In stock';
+  if (totalStock === 0) inventoryStatus = 'Out of stock';
+  else if (totalStock <= 10) inventoryStatus = 'Low stock';
+
+  let category: ProductCategory = 'Accessories';
+  if (p.gender === 'MEN') category = 'Men';
+  else if (p.gender === 'WOMEN') category = 'Women';
+
+  let status: ProductStatus = 'Draft';
+  if (p.isActive) status = 'Active';
+  else if (p.isActive === false && p.isFeatured === false) status = 'Archived';
+
+  const priceNum = Number(p.salePrice ?? p.basePrice ?? 0);
+  return {
+    id: p.id,
+    name: p.name,
+    category,
+    status,
+    inventory: totalStock,
+    inventoryStatus,
+    price: priceNum.toFixed(2),
+    imageUrl: Array.isArray(p.images) && p.images[0]?.url ? p.images[0].url : undefined,
+  };
+};
 
 export default function Products() {
   // ── State Management ──
-  const [products, setProducts] = useState<Product[]>(initialProducts);
+  const [products, setProducts] = useState<Product[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await productService.listProducts();
+        const list = res?.data?.data ?? res?.data ?? res ?? [];
+        if (!cancelled && Array.isArray(list)) {
+          setProducts(list.map(mapApiProductToView));
+        }
+      } catch (err) {
+        if (!cancelled) setProducts([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
   const [searchQuery, setSearchQuery] = useState('');
   
   // Category Tabs & Filter Dropdown State

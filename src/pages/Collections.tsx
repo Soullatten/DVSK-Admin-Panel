@@ -100,17 +100,19 @@ export default function Collections() {
   const { data: liveData, loading, viewOnMainWebsite } = useMainWebsite<any>("/collections");
 
   useEffect(() => {
-    if (liveData && Array.isArray(liveData) && liveData.length > 0) {
+    if (Array.isArray(liveData)) {
       const mapped = liveData.map((item: any, idx: number) => ({
         id: item.id || `COL-10${idx}`,
         title: item.title || 'Untitled Collection',
-        handle: item.handle || item.title?.toLowerCase().replace(/\s+/g, '-') || 'untitled',
+        handle: item.handle || item.slug || item.title?.toLowerCase().replace(/\s+/g, '-') || 'untitled',
         category: item.category || 'Men',
-        productCount: item.product_count || item.products?.length || 0,
+        productCount: item.products_count ?? item.product_count ?? item.products?.length ?? 0,
         status: item.status || 'Active',
-        imageUrl: item.image || demoCollections[idx % demoCollections.length].imageUrl
+        imageUrl: item.image || '',
       }));
       setCollections(mapped);
+    } else {
+      setCollections([]);
     }
   }, [liveData]);
 

@@ -15,7 +15,7 @@ export default defineConfig({
     port: 5172,
     proxy: {
       "/api": {
-        target: "http://localhost:5001", // dvsk-admin-backend
+        target: "http://localhost:5000", // DVSK main website backend (single source of truth)
         changeOrigin: true,
       },
     },

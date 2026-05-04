@@ -1,14 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
     Search, Bell, Settings, Home, Inbox,
     Megaphone, Percent, TrendingUp,
     Package, Users, Store, Plus,
-    Globe, BookOpen, MessageSquare, X, Eye, MessageCircle, Sparkles
+    Globe, BookOpen, MessageSquare, X, Eye, MessageCircle, Sparkles,
+    LogIn, LogOut, ChevronDown, ShoppingBag, AlertCircle, CornerDownLeft
 } from 'lucide-react';
+import type { Socket } from 'socket.io-client';
+import { connectLiveFeed } from '../lib/liveSocket';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 import secondaryLogo from '../assets/Secondary_logo.svg';
 import MetallicPaint from '@/components/MetallicPaint';
 import AIChat, { type Message } from './AIChat';
+import { auth } from '../lib/firebase';
+import { clearAuthToken } from '../api/client';
+import toast from 'react-hot-toast';
 
 const metallicProps = {
     seed: 42, scale: 2, patternSharpness: 0.2, noiseScale: 2.5,
@@ -82,6 +89,226 @@ export default function Layout() {
     const [isChatOpen, setIsChatOpen] = useState(false);
     const [scrolled, setScrolled] = useState(false);
 
+    const [authUser, setAuthUser] = useState<{ name?: string | null; email?: string | null } | null>(null);
+    const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+    const profileRef = useRef<HTMLDivElement>(null);
+
+    // ── Search ──
+    const [searchQuery, setSearchQuery] = useState('');
+    const [searchOpen, setSearchOpen] = useState(false);
+    const [searchActiveIdx, setSearchActiveIdx] = useState(0);
+    const searchRef = useRef<HTMLDivElement>(null);
+    const searchInputRef = useRef<HTMLInputElement>(null);
+
+    const SEARCH_TARGETS = [
+        { label: 'Home', path: '/', section: 'Page' },
+        { label: 'Orders', path: '/orders', section: 'Page' },
+        { label: 'Drafts', path: '/orders/drafts', section: 'Page' },
+        { label: 'Abandoned Checkouts', path: '/orders/abandoned', section: 'Page' },
+        { label: 'Products', path: '/products', section: 'Page' },
+        { label: 'Collections', path: '/products/collections', section: 'Page' },
+        { label: 'Inventory', path: '/products/inventory', section: 'Page' },
+        { label: 'Purchase Orders', path: '/products/purchase-orders', section: 'Page' },
+        { label: 'Transfers', path: '/products/transfers', section: 'Page' },
+        { label: 'Gift Cards', path: '/products/gift-cards', section: 'Page' },
+        { label: 'Customers', path: '/customers', section: 'Page' },
+        { label: 'Segments', path: '/customers/segments', section: 'Page' },
+        { label: 'Companies', path: '/customers/companies', section: 'Page' },
+        { label: 'Marketing', path: '/marketing', section: 'Page' },
+        { label: 'Campaigns', path: '/marketing/campaigns', section: 'Page' },
+        { label: 'Automations', path: '/marketing/automations', section: 'Page' },
+        { label: 'Attribution', path: '/marketing/attribution', section: 'Page' },
+        { label: 'Discounts', path: '/discounts', section: 'Page' },
+        { label: 'Markets', path: '/markets', section: 'Page' },
+        { label: 'Catalogs', path: '/catalogs', section: 'Page' },
+        { label: 'Analytics', path: '/analytics', section: 'Page' },
+        { label: 'Reports', path: '/analytics/reports', section: 'Page' },
+        { label: 'Live View', path: '/analytics/live-view', section: 'Page' },
+        { label: 'Online Store', path: '/online-store', section: 'Page' },
+    ];
+
+    const searchResults = React.useMemo(() => {
+        if (!searchQuery.trim()) return [];
+        const q = searchQuery.toLowerCase();
+        return SEARCH_TARGETS
+            .filter((t) => t.label.toLowerCase().includes(q) || t.path.toLowerCase().includes(q))
+            .slice(0, 8);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [searchQuery]);
+
+    const goToSearchResult = (path: string) => {
+        navigate(path);
+        setSearchOpen(false);
+        setSearchQuery('');
+    };
+
+    // ── Notifications ──
+    type Notification = {
+        id: string;
+        type: 'order' | 'inventory' | 'system';
+        title: string;
+        body: string;
+        ts: number;
+        read: boolean;
+        link?: string;
+    };
+
+    const [notifications, setNotifications] = useState<Notification[]>(() => {
+        try {
+            const stored = localStorage.getItem('dvsk_notifications');
+            if (stored) return JSON.parse(stored);
+        } catch {}
+        return [];
+    });
+    const [bellOpen, setBellOpen] = useState(false);
+    const bellRef = useRef<HTMLDivElement>(null);
+    const unreadCount = notifications.filter((n) => !n.read).length;
+
+    const persistNotifications = (list: Notification[]) => {
+        try {
+            localStorage.setItem('dvsk_notifications', JSON.stringify(list.slice(0, 50)));
+        } catch {}
+    };
+
+    const pushNotification = (n: Omit<Notification, 'id' | 'read'>) => {
+        const note: Notification = {
+            ...n,
+            id: `${n.ts}_${Math.random().toString(36).slice(2, 8)}`,
+            read: false,
+        };
+        setNotifications((prev) => {
+            const next = [note, ...prev].slice(0, 50);
+            persistNotifications(next);
+            return next;
+        });
+    };
+
+    const markAllRead = () => {
+        setNotifications((prev) => {
+            const next = prev.map((n) => ({ ...n, read: true }));
+            persistNotifications(next);
+            return next;
+        });
+    };
+
+    const clearAllNotifications = () => {
+        setNotifications([]);
+        persistNotifications([]);
+    };
+
+    const handleNotificationClick = (id: string, link?: string) => {
+        setNotifications((prev) => {
+            const next = prev.map((n) => (n.id === id ? { ...n, read: true } : n));
+            persistNotifications(next);
+            return next;
+        });
+        if (link) navigate(link);
+        setBellOpen(false);
+    };
+
+    const formatTimeAgo = (ts: number): string => {
+        const sec = Math.floor((Date.now() - ts) / 1000);
+        if (sec < 60) return 'just now';
+        const m = Math.floor(sec / 60);
+        if (m < 60) return `${m}m ago`;
+        const h = Math.floor(m / 60);
+        if (h < 24) return `${h}h ago`;
+        return `${Math.floor(h / 24)}d ago`;
+    };
+
+    useEffect(() => {
+        const unsubscribe = onAuthStateChanged(auth, (user) => {
+            if (user) {
+                setAuthUser({ name: user.displayName || user.email?.split('@')[0], email: user.email });
+            } else {
+                setAuthUser(null);
+            }
+        });
+        return () => unsubscribe();
+    }, []);
+
+    useEffect(() => {
+        const onClick = (e: MouseEvent) => {
+            if (profileRef.current && !profileRef.current.contains(e.target as Node)) {
+                setProfileMenuOpen(false);
+            }
+            if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+                setSearchOpen(false);
+            }
+            if (bellRef.current && !bellRef.current.contains(e.target as Node)) {
+                setBellOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', onClick);
+        return () => document.removeEventListener('mousedown', onClick);
+    }, []);
+
+    // Cmd/Ctrl + K to focus search
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+                e.preventDefault();
+                searchInputRef.current?.focus();
+                setSearchOpen(true);
+            }
+            if (e.key === 'Escape') {
+                setSearchOpen(false);
+                setBellOpen(false);
+            }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, []);
+
+    // Subscribe to socket events for notifications
+    useEffect(() => {
+        if (!authUser) return;
+        let cancelled = false;
+        let socket: Socket | null = null;
+        (async () => {
+            socket = await connectLiveFeed();
+            if (cancelled) {
+                socket.disconnect();
+                return;
+            }
+            socket.on('order:placed', (d: any) => {
+                pushNotification({
+                    type: 'order',
+                    title: `New order ${d.id || ''}`.trim(),
+                    body: `${d.amount || ''}${d.city ? ' from ' + d.city : ''}`.trim(),
+                    ts: d.ts || Date.now(),
+                    link: '/orders',
+                });
+                toast.success(`New order: ${d.amount || ''}${d.city ? ' · ' + d.city : ''}`, { icon: '📦' });
+            });
+            socket.on('inventory:low', (d: any) => {
+                pushNotification({
+                    type: 'inventory',
+                    title: 'Stock running low',
+                    body: `${d.productName || d.sku || 'Item'} — ${d.stock ?? '?'} left`,
+                    ts: d.ts || Date.now(),
+                    link: '/products/inventory',
+                });
+            });
+        })();
+        return () => {
+            cancelled = true;
+            socket?.disconnect();
+        };
+    }, [authUser]);
+
+    const handleSignOut = async () => {
+        try {
+            await signOut(auth);
+            clearAuthToken();
+            localStorage.removeItem('adminAuth');
+            toast.success('Signed out');
+            navigate('/login', { replace: true });
+        } catch (err: any) {
+            toast.error(err?.message || 'Sign out failed');
+        }
+    };
+
     useEffect(() => {
         const handleScroll = () => setScrolled(window.scrollY > 10);
         window.addEventListener('scroll', handleScroll);
@@ -154,36 +381,206 @@ export default function Layout() {
                     </div>
                 </div>
 
-                <div className="flex-1 max-w-[580px] mx-4 relative group">
-                    <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none transition-colors group-focus-within:text-white text-[#6b6b6b]">
+                <div ref={searchRef} className="flex-1 max-w-[580px] mx-4 relative group">
+                    <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none transition-colors group-focus-within:text-white text-[#6b6b6b] z-10">
                         <Search className="h-4 w-4" />
                     </div>
                     <input
+                        ref={searchInputRef}
                         type="text"
-                        placeholder="Search anything..."
+                        placeholder="Search pages — try 'orders' or 'inventory'..."
+                        value={searchQuery}
+                        onChange={(e) => {
+                            setSearchQuery(e.target.value);
+                            setSearchOpen(true);
+                            setSearchActiveIdx(0);
+                        }}
+                        onFocus={() => setSearchOpen(searchQuery.length > 0)}
+                        onKeyDown={(e) => {
+                            if (e.key === 'ArrowDown') {
+                                e.preventDefault();
+                                setSearchActiveIdx((i) => Math.min(i + 1, Math.max(0, searchResults.length - 1)));
+                            } else if (e.key === 'ArrowUp') {
+                                e.preventDefault();
+                                setSearchActiveIdx((i) => Math.max(0, i - 1));
+                            } else if (e.key === 'Enter') {
+                                e.preventDefault();
+                                const target = searchResults[searchActiveIdx];
+                                if (target) goToSearchResult(target.path);
+                            }
+                        }}
                         className="w-full bg-[#1a1a1a] hover:bg-[#222222] text-[#e3e3e3] placeholder-[#6b6b6b] text-[14px] rounded-xl pl-10 pr-16 py-2 border border-white/5 hover:border-white/10 focus:border-purple-500/50 focus:bg-[#1a1a1a] focus:ring-4 focus:ring-purple-500/10 focus:outline-none transition-all duration-200"
                     />
                     <div className="absolute inset-y-0 right-2 flex items-center pointer-events-none gap-1">
                         <span className="text-[10px] font-semibold bg-[#2a2a2a] border border-white/10 rounded px-1.5 py-0.5 text-[#888]">⌘</span>
                         <span className="text-[10px] font-semibold bg-[#2a2a2a] border border-white/10 rounded px-1.5 py-0.5 text-[#888]">K</span>
                     </div>
+
+                    {searchOpen && searchResults.length > 0 && (
+                        <div className="absolute left-0 right-0 top-[calc(100%+6px)] bg-[#0f0f0f] border border-white/10 rounded-xl shadow-2xl py-1.5 z-50 overflow-hidden">
+                            <div className="px-3 py-1.5 text-[10px] font-bold text-[#666] uppercase tracking-widest">
+                                {searchResults.length} {searchResults.length === 1 ? 'result' : 'results'}
+                            </div>
+                            {searchResults.map((r, i) => (
+                                <button
+                                    key={r.path}
+                                    onMouseEnter={() => setSearchActiveIdx(i)}
+                                    onClick={() => goToSearchResult(r.path)}
+                                    className={`w-full flex items-center justify-between px-3 py-2.5 text-left transition-colors ${i === searchActiveIdx ? 'bg-purple-500/10' : 'hover:bg-white/5'}`}
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-6 h-6 rounded-md bg-white/5 border border-white/10 flex items-center justify-center text-[#888]">
+                                            <Search className="h-3 w-3" />
+                                        </div>
+                                        <div className="flex flex-col leading-tight">
+                                            <span className="text-[13px] font-semibold text-white">{r.label}</span>
+                                            <span className="text-[11px] text-[#666] font-mono">{r.path}</span>
+                                        </div>
+                                    </div>
+                                    {i === searchActiveIdx && <CornerDownLeft className="h-3.5 w-3.5 text-purple-400" />}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                    {searchOpen && searchQuery.trim() && searchResults.length === 0 && (
+                        <div className="absolute left-0 right-0 top-[calc(100%+6px)] bg-[#0f0f0f] border border-white/10 rounded-xl shadow-2xl py-6 px-4 z-50 text-center text-[13px] text-[#666]">
+                            No matches for <span className="text-white font-mono">"{searchQuery}"</span>
+                        </div>
+                    )}
                 </div>
 
                 <div className="flex items-center gap-3">
-                    <button className="p-2 hover:bg-white/5 rounded-xl transition-colors relative group">
-                        <Bell className="h-5 w-5 text-[#888] group-hover:text-white transition-colors" strokeWidth={1.5} />
-                        <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-purple-500 rounded-full border-2 border-[#111111]"></span>
-                    </button>
-                    
-                    <div className="flex items-center gap-2.5 cursor-pointer hover:bg-white/5 pl-2 pr-3 py-1.5 rounded-xl border border-transparent hover:border-white/5 transition-all ml-1">
-                        <div className="w-8 h-8 flex-shrink-0 rounded-full overflow-hidden border border-white/10">
-                            <MetallicPaint imageSrc={secondaryLogo} {...metallicProps} />
+                    {authUser && (
+                        <div ref={bellRef} className="relative">
+                            <button
+                                onClick={() => { setBellOpen((v) => !v); }}
+                                className="p-2 hover:bg-white/5 rounded-xl transition-colors relative group"
+                            >
+                                <Bell className="h-5 w-5 text-[#888] group-hover:text-white transition-colors" strokeWidth={1.5} />
+                                {unreadCount > 0 && (
+                                    <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 bg-purple-500 rounded-full border-2 border-[#111111] text-[10px] font-bold text-white flex items-center justify-center leading-none">
+                                        {unreadCount > 9 ? '9+' : unreadCount}
+                                    </span>
+                                )}
+                            </button>
+                            {bellOpen && (
+                                <div className="absolute right-0 top-[calc(100%+6px)] bg-[#0f0f0f] border border-white/10 rounded-xl shadow-2xl w-[360px] max-h-[480px] flex flex-col z-50 overflow-hidden">
+                                    <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between bg-[#111]">
+                                        <div className="flex items-center gap-2">
+                                            <Bell className="h-3.5 w-3.5 text-purple-400" />
+                                            <span className="text-[13px] font-bold text-white">Notifications</span>
+                                            {unreadCount > 0 && (
+                                                <span className="bg-purple-500/20 text-purple-300 text-[10px] font-bold px-1.5 py-0.5 rounded-md uppercase tracking-wider">
+                                                    {unreadCount} new
+                                                </span>
+                                            )}
+                                        </div>
+                                        {notifications.length > 0 && (
+                                            <button
+                                                onClick={markAllRead}
+                                                className="text-[11px] text-[#888] hover:text-white transition-colors font-medium"
+                                            >
+                                                Mark all read
+                                            </button>
+                                        )}
+                                    </div>
+                                    <div className="flex-1 overflow-y-auto custom-scrollbar">
+                                        {notifications.length === 0 ? (
+                                            <div className="py-12 flex flex-col items-center justify-center text-center px-6">
+                                                <div className="w-12 h-12 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-3">
+                                                    <Bell className="h-5 w-5 text-[#555]" />
+                                                </div>
+                                                <p className="text-[13px] font-semibold text-[#888]">No notifications yet</p>
+                                                <p className="text-[11px] text-[#555] mt-1">New orders and stock alerts will appear here.</p>
+                                            </div>
+                                        ) : (
+                                            <div className="divide-y divide-white/5">
+                                                {notifications.map((n) => {
+                                                    const Icon = n.type === 'order' ? ShoppingBag : n.type === 'inventory' ? AlertCircle : Sparkles;
+                                                    const tint =
+                                                        n.type === 'order' ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' :
+                                                        n.type === 'inventory' ? 'text-amber-400 bg-amber-500/10 border-amber-500/20' :
+                                                        'text-purple-400 bg-purple-500/10 border-purple-500/20';
+                                                    return (
+                                                        <button
+                                                            key={n.id}
+                                                            onClick={() => handleNotificationClick(n.id, n.link)}
+                                                            className={`w-full text-left px-4 py-3 hover:bg-white/[0.03] transition-colors group flex items-start gap-3 ${!n.read ? 'bg-purple-500/[0.04]' : ''}`}
+                                                        >
+                                                            <div className={`w-8 h-8 rounded-lg border flex items-center justify-center shrink-0 ${tint}`}>
+                                                                <Icon className="h-4 w-4" strokeWidth={1.8} />
+                                                            </div>
+                                                            <div className="flex-1 min-w-0">
+                                                                <div className="flex items-start justify-between gap-2">
+                                                                    <span className="text-[13px] font-semibold text-white truncate">{n.title}</span>
+                                                                    {!n.read && <span className="w-1.5 h-1.5 rounded-full bg-purple-400 mt-1.5 shrink-0" />}
+                                                                </div>
+                                                                {n.body && (
+                                                                    <p className="text-[12px] text-[#aaa] mt-0.5 truncate">{n.body}</p>
+                                                                )}
+                                                                <p className="text-[10px] text-[#666] mt-1">{formatTimeAgo(n.ts)}</p>
+                                                            </div>
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+                                    </div>
+                                    {notifications.length > 0 && (
+                                        <div className="border-t border-white/5 px-3 py-2 bg-[#0a0a0a]">
+                                            <button
+                                                onClick={clearAllNotifications}
+                                                className="w-full text-[11px] text-[#666] hover:text-red-400 transition-colors py-1.5 font-medium"
+                                            >
+                                                Clear all
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                         </div>
-                        <div className="flex flex-col">
-                            <span className="text-[#e3e3e3] text-[13px] font-semibold leading-tight">DVSK Admin</span>
-                            <span className="text-[#6b6b6b] text-[11px] font-medium leading-tight">Pro Plan</span>
+                    )}
+
+                    {authUser ? (
+                        <div ref={profileRef} className="relative ml-1">
+                            <button
+                                onClick={() => setProfileMenuOpen((v) => !v)}
+                                className="flex items-center gap-2.5 cursor-pointer hover:bg-white/5 pl-2 pr-3 py-1.5 rounded-xl border border-transparent hover:border-white/5 transition-all"
+                            >
+                                <div className="w-8 h-8 flex-shrink-0 rounded-full overflow-hidden border border-white/10">
+                                    <MetallicPaint imageSrc={secondaryLogo} {...metallicProps} />
+                                </div>
+                                <div className="flex flex-col text-left">
+                                    <span className="text-[#e3e3e3] text-[13px] font-semibold leading-tight">DVSK Admin</span>
+                                    <span className="text-[#6b6b6b] text-[11px] font-medium leading-tight">Pro Plan</span>
+                                </div>
+                                <ChevronDown className={`h-3.5 w-3.5 text-[#666] transition-transform ${profileMenuOpen ? 'rotate-180' : ''}`} strokeWidth={2} />
+                            </button>
+                            {profileMenuOpen && (
+                                <div className="absolute right-0 top-[calc(100%+6px)] bg-[#111111] border border-white/10 rounded-xl shadow-2xl py-1.5 w-[220px] overflow-hidden z-50">
+                                    <div className="px-3 py-2 border-b border-white/5">
+                                        <div className="text-[12px] font-semibold text-white truncate">{authUser.name || 'Admin'}</div>
+                                        {authUser.email && <div className="text-[11px] text-[#888] truncate">{authUser.email}</div>}
+                                    </div>
+                                    <button
+                                        onClick={handleSignOut}
+                                        className="w-full flex items-center gap-2.5 px-3 py-2.5 text-[13px] font-medium text-[#ececec] hover:bg-red-500/10 hover:text-red-400 transition-colors"
+                                    >
+                                        <LogOut className="h-4 w-4" strokeWidth={1.5} />
+                                        Sign out
+                                    </button>
+                                </div>
+                            )}
                         </div>
-                    </div>
+                    ) : (
+                        <button
+                            onClick={() => navigate('/login')}
+                            className="flex items-center gap-2 cursor-pointer bg-purple-600 hover:bg-purple-500 text-white pl-3 pr-4 py-2 rounded-xl text-[13px] font-semibold shadow-[0_0_15px_rgba(168,85,247,0.25)] transition-colors ml-1"
+                        >
+                            <LogIn className="h-4 w-4" strokeWidth={2} />
+                            Login
+                        </button>
+                    )}
                 </div>
             </nav>
 

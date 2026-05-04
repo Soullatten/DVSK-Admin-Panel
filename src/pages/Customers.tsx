@@ -1,18 +1,20 @@
-import React, { useState, useEffect } from "react";
-import { 
-  Users, 
-  Activity, 
-  Globe, 
-  ShoppingBag, 
-  Search, 
-  MoreHorizontal, 
+import React, { useState, useEffect, useRef } from "react";
+import {
+  Users,
+  Activity,
+  Globe,
+  ShoppingBag,
+  Search,
+  MoreHorizontal,
   Eye,
   Clock,
   MapPin,
   UserCircle
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import type { Socket } from "socket.io-client";
 import { useMainWebsite } from "../hooks/useMainWebsite";
+import { connectLiveFeed } from "../lib/liveSocket";
 
 // ── Types & Demo Data ──
 interface Customer {
@@ -35,51 +37,92 @@ interface LiveSession {
   timeActive: string;
 }
 
-const DEMO_CUSTOMERS: Customer[] = [
-  { id: 'CUS-001', name: 'Alex Carter', email: 'alex@example.com', orders_count: 12, total_spent: 1240.50, isOnline: true, lastLogin: 'Right now', avatarColor: 'bg-blue-500' },
-  { id: 'CUS-002', name: 'Sarah Jenkins', email: 'sarah.j@example.com', orders_count: 3, total_spent: 345.00, isOnline: false, lastLogin: '2 hours ago', avatarColor: 'bg-purple-500' },
-  { id: 'CUS-003', name: 'Mike Ross', email: 'mross@company.com', orders_count: 8, total_spent: 890.20, isOnline: true, lastLogin: 'Right now', avatarColor: 'bg-emerald-500' },
-  { id: 'CUS-004', name: 'Emily Chen', email: 'emily.chen@email.com', orders_count: 1, total_spent: 120.00, isOnline: false, lastLogin: '1 day ago', avatarColor: 'bg-amber-500' },
-  { id: 'CUS-005', name: 'David Kim', email: 'dkim@startup.io', orders_count: 0, total_spent: 0.00, isOnline: false, lastLogin: '3 days ago', avatarColor: 'bg-rose-500' },
-];
-
-const INITIAL_SESSIONS: LiveSession[] = [
-  { id: 'SESS-1', isGuest: false, customerName: 'Alex Carter', location: 'Chicago, US', currentPage: '/products/heavyweight-hoodie', timeActive: '12m' },
-  { id: 'SESS-2', isGuest: true, location: 'Mumbai, IN', currentPage: '/checkout', timeActive: '4m' },
-  { id: 'SESS-3', isGuest: false, customerName: 'Mike Ross', location: 'New York, US', currentPage: '/account/orders', timeActive: '28m' },
-  { id: 'SESS-4', isGuest: true, location: 'London, UK', currentPage: '/', timeActive: '1m' },
-];
-
-const PAGES_TO_SIMULATE = ['/', '/products/heavyweight-hoodie', '/products/summer-cap', '/cart', '/checkout', '/collections/new-arrivals'];
-
 export default function Customers() {
   const { data: liveData, loading, error, viewOnMainWebsite } = useMainWebsite<any>("/customers");
-  
-  // Use real data if available, otherwise fallback to rich demo data
-  const [customers, setCustomers] = useState<Customer[]>(liveData && liveData.length > 0 ? liveData : DEMO_CUSTOMERS);
+
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  
-  // Live Sessions State
-  const [sessions, setSessions] = useState<LiveSession[]>(INITIAL_SESSIONS);
+  const [sessions, setSessions] = useState<LiveSession[]>([]);
+  const [liveCount, setLiveCount] = useState(0);
+  const sessionMapRef = useRef<Map<string, { ip: string; path: string; joinedAt: number }>>(new Map());
 
-  // Simulate real-time website traffic!
   useEffect(() => {
-    const interval = setInterval(() => {
-      setSessions(currentSessions => {
-        const newSessions = [...currentSessions];
-        // Randomly pick a session to "click" to a new page
-        const randomSessionIndex = Math.floor(Math.random() * newSessions.length);
-        const randomPage = PAGES_TO_SIMULATE[Math.floor(Math.random() * PAGES_TO_SIMULATE.length)];
-        
-        newSessions[randomSessionIndex] = {
-          ...newSessions[randomSessionIndex],
-          currentPage: randomPage
-        };
-        return newSessions;
-      });
-    }, 4000); // Updates someone's page every 4 seconds
+    setCustomers(Array.isArray(liveData) ? liveData : []);
+  }, [liveData]);
 
-    return () => clearInterval(interval);
+  // Reload customer data on every order placed so the KPIs (orders count, total spent) stay current
+  const refetchCustomers = async () => {
+    try {
+      const { apiClient } = await import('../api/client');
+      const res = await apiClient.get('/customers');
+      const data = res.data?.data ?? res.data;
+      if (Array.isArray(data)) setCustomers(data);
+    } catch {}
+  };
+
+  const rebuildSessions = () => {
+    const now = Date.now();
+    const list: LiveSession[] = [];
+    sessionMapRef.current.forEach((s, id) => {
+      const sec = Math.max(0, Math.floor((now - s.joinedAt) / 1000));
+      const m = Math.floor(sec / 60);
+      const timeActive = m > 0 ? `${m}m ${sec % 60}s` : `${sec}s`;
+      list.push({
+        id,
+        isGuest: true,
+        location: s.ip,
+        currentPage: s.path,
+        timeActive,
+      });
+    });
+    setSessions(list);
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    let socket: Socket | null = null;
+    (async () => {
+      socket = await connectLiveFeed();
+      if (cancelled) {
+        socket.disconnect();
+        return;
+      }
+      socket.on('visitors:snapshot', (list: Array<{ id: string; ip: string; path: string; joinedAt: number }>) => {
+        sessionMapRef.current.clear();
+        for (const v of list) {
+          sessionMapRef.current.set(v.id, { ip: v.ip, path: v.path || '/', joinedAt: v.joinedAt });
+        }
+        rebuildSessions();
+      });
+      socket.on('viewers:count', (data: { count: number }) => {
+        setLiveCount(data.count);
+      });
+      socket.on('visitor:join', (d: { id: string; ip: string; joinedAt?: number; ts?: number }) => {
+        const joinedAt = d.joinedAt ?? d.ts ?? Date.now();
+        sessionMapRef.current.set(d.id, { ip: d.ip, path: '/', joinedAt });
+        rebuildSessions();
+      });
+      socket.on('page:view', (d: { id: string; ip: string; path: string; ts: number }) => {
+        const existing = sessionMapRef.current.get(d.id);
+        sessionMapRef.current.set(d.id, {
+          ip: d.ip,
+          path: d.path,
+          joinedAt: existing?.joinedAt ?? d.ts,
+        });
+        rebuildSessions();
+      });
+      socket.on('visitor:leave', (d: { id: string }) => {
+        sessionMapRef.current.delete(d.id);
+        rebuildSessions();
+      });
+      socket.on('order:placed', refetchCustomers);
+    })();
+    const tick = setInterval(rebuildSessions, 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(tick);
+      socket?.disconnect();
+    };
   }, []);
 
   const filteredCustomers = customers.filter(c => 
@@ -121,7 +164,7 @@ export default function Customers() {
               <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
             </span>
           </div>
-          <div className="text-[28px] font-bold text-white">{sessions.length} <span className="text-[14px] text-[#888] font-medium">on site right now</span></div>
+          <div className="text-[28px] font-bold text-white">{liveCount} <span className="text-[14px] text-[#888] font-medium">on site right now</span></div>
         </div>
         <div className="bg-[#111111] border border-white/10 rounded-2xl p-5 shadow-lg">
           <div className="flex items-center gap-2 text-[#888] text-[13px] font-bold uppercase tracking-wider mb-2"><ShoppingBag className="w-4 h-4" /> Active Carts</div>

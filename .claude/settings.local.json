@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "Bash(npm run *)",
+      "Bash(curl -s http://localhost:5000/api/health)",
+      "Bash(curl -s -X POST http://localhost:5000/api/admin/chat -H \"Content-Type: application/json\" -H \"Origin: http://localhost:5172\" -d \"{\\\\\"messages\\\\\":[]}\" -i)",
+      "Bash(curl -s -o /dev/null -w \"/customers: %{http_code}\\\\n\" http://localhost:5000/api/customers)",
+      "Bash(curl -s -o /dev/null -w \"/discounts: %{http_code}\\\\n\" http://localhost:5000/api/discounts)",
+      "Bash(curl -s -o /dev/null -w \"/collections: %{http_code}\\\\n\" http://localhost:5000/api/collections)",
+      "Bash(curl -s -o /dev/null -w \"/giftcards: %{http_code}\\\\n\" http://localhost:5000/api/giftcards)",
+      "Bash(curl -s -o /dev/null -w \"/transfers: %{http_code}\\\\n\" http://localhost:5000/api/transfers)",
+      "Bash(curl -s -o /dev/null -w \"health: %{http_code}\\\\n\" http://localhost:5000/api/health)"
+    ]
+  }
+}

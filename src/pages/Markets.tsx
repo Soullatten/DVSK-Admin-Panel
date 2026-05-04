@@ -1,22 +1,31 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Globe, Search, SlidersHorizontal, ArrowLeftRight, X, Plus, Sparkles } from 'lucide-react';
-import { useMainWebsite } from '../hooks/useMainWebsite';
+import { marketsApi } from '../api/marketingService';
+import { useAdminDataRefresh } from '../lib/useAdminDataRefresh';
 
-
-const suggestions = [
-    { id: 1, label: 'Create United States Market', flag: '🇺🇸' },
-    { id: 2, label: 'Create United Kingdom Market', flag: '🇬🇧' },
-];
+const suggestions: { id: number; label: string; flag: string }[] = [];
 
 export default function Markets() {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  // eslint-disable-next-line no-unused-vars
-  const { data: liveData, loading: liveLoading, error: liveError, viewOnMainWebsite } = useMainWebsite('/markets');
+  const [markets, setMarkets] = useState<any[]>([]);
 
-    
-  // This console.log ensures variables are "used" to prevent TypeScript errors!
-  console.log("Live Data Connection:", { liveData, liveLoading, liveError, viewOnMainWebsite });
-const [dismissed, setDismissed] = useState<number[]>([]);
+  const refreshMarkets = async () => {
+    try {
+      const list = await marketsApi.list();
+      setMarkets(list);
+    } catch (err) {
+      console.error('[Markets] failed to load', err);
+    }
+  };
+
+  useEffect(() => {
+    refreshMarkets();
+  }, []);
+
+  useAdminDataRefresh('markets', refreshMarkets);
+
+  void markets; // available for future render
+
+  const [dismissed, setDismissed] = useState<number[]>([]);
     const [search, setSearch] = useState('');
 
     return (

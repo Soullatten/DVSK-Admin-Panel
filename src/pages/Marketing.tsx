@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Globe2, 
   Search, 
@@ -31,16 +31,7 @@ interface Market {
   priceAdjustment: number;
 }
 
-const INITIAL_MARKETS: Market[] = [
-  { id: 'M-IN', name: 'India (Primary)', flag: '🇮🇳', status: 'Active', currency: 'INR (₹)', revenue: '₹4.2M', growth: '+12.4%', domain: 'dvsk.in', priceAdjustment: 0 },
-  { id: 'M-US', name: 'United States', flag: '🇺🇸', status: 'Active', currency: 'USD ($)', revenue: '$124.5k', growth: '+8.2%', domain: 'us.dvsk.com', priceAdjustment: 15 },
-  { id: 'M-EU', name: 'European Union', flag: '🇪🇺', status: 'Draft', currency: 'EUR (€)', revenue: '€0', growth: '0%', domain: 'eu.dvsk.com', priceAdjustment: 5 },
-];
-
-const INITIAL_SUGGESTIONS = [
-  { id: 'S-UK', label: 'High traffic detected. Create United Kingdom Market?', flag: '🇬🇧', currency: 'GBP (£)' },
-  { id: 'S-AU', label: 'Growing demand. Create Australia Market?', flag: '🇦🇺', currency: 'AUD ($)' },
-];
+const INITIAL_SUGGESTIONS: { id: string; label: string; flag: string; currency: string }[] = [];
 
 // Comprehensive Global Lists
 const COUNTRIES = [
@@ -103,7 +94,10 @@ export default function Markets() {
   const [searchQuery, setSearchQuery] = useState('');
   
   // Data State
-  const [markets, setMarkets] = useState<Market[]>(INITIAL_MARKETS);
+  const [markets, setMarkets] = useState<Market[]>([]);
+  useEffect(() => {
+    setMarkets(Array.isArray(liveData) ? (liveData as unknown as Market[]) : []);
+  }, [liveData]);
   const [suggestions, setSuggestions] = useState(INITIAL_SUGGESTIONS);
   
   // Modal States
