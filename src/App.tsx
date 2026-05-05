@@ -1,4 +1,6 @@
-import { BrowserRouter, Routes, Route, Navigate, Outlet } from "react-router-dom";
+import { HashRouter, Routes, Route, Navigate, Outlet } from "react-router-dom";
+import UpdateNotifier from "./components/UpdateNotifier";
+import PinGate from "./components/PinGate";
 import { useState, useEffect } from "react";
 import Layout from "./components/Layout";
 
@@ -26,7 +28,8 @@ import Analytics from "./pages/Analytics";
 import Reports from "./pages/Reports";
 import LiveView from "./pages/LiveView";
 import OnlineStore from "./pages/OnlineStore";
-import Login from "./pages/Login"; 
+import Music from "./pages/Music";
+import Login from "./pages/Login";
 
 import { Toaster } from "react-hot-toast";
 
@@ -38,7 +41,9 @@ const ProtectedRoute = () => {
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <PinGate>
+    <HashRouter>
+      <UpdateNotifier />
       <Toaster position="top-right" />
       <Routes>
         {/* Public login page */}
@@ -71,12 +76,14 @@ export default function App() {
             <Route path="/analytics/reports" element={<Reports />} />
             <Route path="/analytics/live-view" element={<LiveView />} />
             <Route path="/online-store" element={<OnlineStore />} />
+            <Route path="/music" element={<Music />} />
           </Route>
         </Route>
 
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/login" />} />
       </Routes>
-    </BrowserRouter>
+    </HashRouter>
+    </PinGate>
   );
 }

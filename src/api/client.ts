@@ -45,8 +45,21 @@ async function getFreshToken(forceRefresh = false): Promise<string | null> {
   return currentToken || localStorage.getItem(TOKEN_KEY);
 }
 
+// In dev (Vite at localhost:5172) we hit "/api" and Vite proxies to localhost:5000.
+// In the packaged Electron app, there is no Vite proxy and the page is loaded
+// from file://, so we must hit the backend at its absolute URL.
+const isElectronFile =
+  typeof window !== "undefined" &&
+  window.location.protocol === "file:" &&
+  Boolean((window as unknown as { dvskApp?: unknown }).dvskApp);
+
+// You can override the backend URL at build time with VITE_API_URL.
+const ELECTRON_API_URL =
+  (import.meta as { env?: { VITE_API_URL?: string } }).env?.VITE_API_URL ||
+  "http://localhost:5000/api";
+
 export const apiClient = axios.create({
-  baseURL: "/api",
+  baseURL: isElectronFile ? ELECTRON_API_URL : "/api",
   withCredentials: true,
 });
 

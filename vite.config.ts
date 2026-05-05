@@ -5,6 +5,9 @@ import path from "path";
 
 // https://vite.dev/config/
 export default defineConfig({
+  // Critical for Electron: relative asset paths so the built bundle works
+  // when loaded via file:// inside the packaged .exe.
+  base: "./",
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
@@ -13,11 +16,16 @@ export default defineConfig({
   },
   server: {
     port: 5172,
+    strictPort: true,
     proxy: {
       "/api": {
-        target: "http://localhost:5000", // DVSK main website backend (single source of truth)
+        target: "http://localhost:5000", // DVSK main website backend
         changeOrigin: true,
       },
     },
+  },
+  build: {
+    outDir: "dist",
+    emptyOutDir: true,
   },
 });

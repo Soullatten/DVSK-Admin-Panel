@@ -5,7 +5,8 @@ import {
     Megaphone, Percent, TrendingUp,
     Package, Users, Store, Plus,
     Globe, BookOpen, MessageSquare, X, Eye, MessageCircle, Sparkles,
-    LogIn, LogOut, ChevronDown, ShoppingBag, AlertCircle, CornerDownLeft
+    LogIn, LogOut, ChevronDown, ShoppingBag, AlertCircle, CornerDownLeft,
+    Music2
 } from 'lucide-react';
 import type { Socket } from 'socket.io-client';
 import { connectLiveFeed } from '../lib/liveSocket';
@@ -70,6 +71,7 @@ const navItems = [
     { icon: <Globe className="h-[18px] w-[18px]" strokeWidth={1.5} />, label: 'Markets', path: '/markets' },
     { icon: <BookOpen className="h-[18px] w-[18px]" strokeWidth={1.5} />, label: 'Catalogs', path: '/catalogs' },
     { icon: <Store className="h-[18px] w-[18px]" strokeWidth={1.5} />, label: 'Online Store', path: '/online-store' },
+    { icon: <Music2 className="h-[18px] w-[18px]" strokeWidth={1.5} />, label: 'Music', path: '/music' },
 ];
 
 export type ChatSession = {
@@ -125,6 +127,7 @@ export default function Layout() {
         { label: 'Reports', path: '/analytics/reports', section: 'Page' },
         { label: 'Live View', path: '/analytics/live-view', section: 'Page' },
         { label: 'Online Store', path: '/online-store', section: 'Page' },
+        { label: 'Music', path: '/music', section: 'Page' },
     ];
 
     const searchResults = React.useMemo(() => {
@@ -374,14 +377,14 @@ export default function Layout() {
         <div className="min-h-screen bg-[#111111] text-[#e3e3e3] antialiased selection:bg-purple-500/30 selection:text-white flex flex-col"
             style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "San Francisco", "Segoe UI", Roboto, sans-serif' }}>
             
-            <nav className={`fixed top-0 w-full h-[60px] flex items-center justify-between px-4 z-50 transition-all duration-300 ${scrolled ? 'bg-[#111111]/80 backdrop-blur-md border-b border-white/5 shadow-sm' : 'bg-[#111111]'}`}>
+            <nav className={`window-drag fixed top-0 w-full h-[60px] flex items-center justify-between pl-4 pr-[160px] z-50 transition-all duration-300 ${scrolled ? 'bg-[#111111]/80 backdrop-blur-md border-b border-white/5 shadow-sm' : 'bg-[#111111]'}`}>
                 <div className="flex items-center gap-3 w-[220px]">
                     <div className="w-10 h-10 flex-shrink-0 rounded-lg overflow-hidden shadow-[0_0_15px_rgba(255,255,255,0.05)] border border-white/10">
                         <MetallicPaint imageSrc={secondaryLogo} {...metallicProps} />
                     </div>
                 </div>
 
-                <div ref={searchRef} className="flex-1 max-w-[580px] mx-4 relative group">
+                <div ref={searchRef} className="window-no-drag flex-1 max-w-[580px] mx-4 relative group">
                     <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none transition-colors group-focus-within:text-white text-[#6b6b6b] z-10">
                         <Search className="h-4 w-4" />
                     </div>
@@ -449,7 +452,7 @@ export default function Layout() {
                     )}
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="window-no-drag flex items-center gap-3">
                     {authUser && (
                         <div ref={bellRef} className="relative">
                             <button
@@ -751,15 +754,15 @@ export default function Layout() {
             <style
                 dangerouslySetInnerHTML={{
                     __html: `
-                        .sidebar-scroll::-webkit-scrollbar { width: 4px; }
+                        .sidebar-scroll::-webkit-scrollbar { width: 6px; }
                         .sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
-                        .sidebar-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
-                        .sidebar-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+                        .sidebar-scroll::-webkit-scrollbar-thumb { background: rgba(168, 85, 247, 0.18); border-radius: 10px; }
+                        .sidebar-scroll::-webkit-scrollbar-thumb:hover { background: rgba(168, 85, 247, 0.4); }
 
-                        main::-webkit-scrollbar { width: 8px; }
-                        main::-webkit-scrollbar-track { background: #0a0a0a; }
-                        main::-webkit-scrollbar-thumb { background: #222; border-radius: 10px; border: 2px solid #0a0a0a; }
-                        main::-webkit-scrollbar-thumb:hover { background: #333; }
+                        main::-webkit-scrollbar { width: 10px; }
+                        main::-webkit-scrollbar-track { background: transparent; }
+                        main::-webkit-scrollbar-thumb { background: rgba(168, 85, 247, 0.22); border-radius: 10px; border: 2px solid transparent; background-clip: padding-box; }
+                        main::-webkit-scrollbar-thumb:hover { background: rgba(168, 85, 247, 0.5); background-clip: padding-box; border: 2px solid transparent; }
 
                         @keyframes chatPopIn {
                             0% { opacity: 0; transform: scale(0.9) translateY(10px); }
